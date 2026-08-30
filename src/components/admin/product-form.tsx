@@ -32,15 +32,27 @@ export interface ProductFormValues {
   seoDescription: string;
   isActive: boolean;
   initialStock: string;
+  productFamily: string;
+  allowBackorder: boolean;
 }
 
 export interface SpecRow { specKey: string; specValue: string; unit: string }
 export interface ImageRow { url: string; alt: string }
 export interface FitmentRow {
   vehicleModelId: string;
+  vehicleTrimId: string;
   vehicleEngineId: string;
   yearFrom: string;
   yearTo: string;
+  fitmentType: 'DIRECT' | 'WITH_MODIFICATION' | 'NOT_COMPATIBLE';
+  note: string;
+}
+
+export interface ReferenceRow {
+  relationType: 'SUPERSEDES' | 'SUPERSEDED_BY' | 'ALTERNATE' | 'CROSS_REFERENCE';
+  targetNumber: string;
+  targetBrand: string;
+  note: string;
 }
 
 const EMPTY: ProductFormValues = {
@@ -49,6 +61,7 @@ const EMPTY: ProductFormValues = {
   weightGrams: '', lengthMm: '', widthMm: '', heightMm: '', warrantyMonths: '',
   countryOfOrigin: '', condition: 'new', installationNotes: '', tags: '',
   seoTitle: '', seoDescription: '', isActive: false, initialStock: '',
+  productFamily: '', allowBackorder: false,
 };
 
 /** The illustrations shipped with the demo catalogue, offered as image choices. */
@@ -66,7 +79,7 @@ const num = (v: string): number | null => {
 };
 
 export function ProductForm({
-  productId, initialValues, initialSpecs, initialImages, initialFitments,
+  productId, initialValues, initialSpecs, initialImages, initialFitments, initialReferences,
   categories, brands, vehicles, currentStock,
 }: {
   productId?: string;
@@ -74,6 +87,7 @@ export function ProductForm({
   initialSpecs?: SpecRow[];
   initialImages?: ImageRow[];
   initialFitments?: FitmentRow[];
+  initialReferences?: ReferenceRow[];
   categories: { id: string; nameFa: string; parentId: string | null }[];
   brands: { id: string; nameFa: string }[];
   vehicles: VehicleBrandNode[];
@@ -84,6 +98,7 @@ export function ProductForm({
   const [specs, setSpecs] = useState<SpecRow[]>(initialSpecs ?? []);
   const [images, setImages] = useState<ImageRow[]>(initialImages ?? []);
   const [fitments, setFitments] = useState<FitmentRow[]>(initialFitments ?? []);
+  const [references, setReferences] = useState<ReferenceRow[]>(initialReferences ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,11 +143,22 @@ export function ProductForm({
       images: images.filter((i) => i.url.trim()).map((i) => ({ url: i.url.trim(), alt: i.alt.trim() || undefined })),
       specs: specs.filter((s) => s.specKey.trim() && s.specValue.trim())
         .map((s) => ({ specKey: s.specKey.trim(), specValue: s.specValue.trim(), unit: s.unit.trim() || undefined })),
+      productFamily: values.productFamily.trim() || undefined,
+      allowBackorder: values.allowBackorder,
       fitments: fitments.filter((f) => f.vehicleModelId).map((f) => ({
         vehicleModelId: f.vehicleModelId,
+        vehicleTrimId: f.vehicleTrimId || null,
         vehicleEngineId: f.vehicleEngineId || null,
         yearFrom: num(f.yearFrom),
         yearTo: num(f.yearTo),
+        fitmentType: f.fitmentType,
+        note: f.note.trim() || null,
+      })),
+      references: references.filter((r) => r.targetNumber.trim()).map((r) => ({
+        relationType: r.relationType,
+        targetNumber: r.targetNumber.trim(),
+        targetBrand: r.targetBrand.trim() || null,
+        note: r.note.trim() || null,
       })),
       ...(productId ? {} : { initialStock: num(values.initialStock) ?? 0 }),
     };
@@ -208,6 +234,11 @@ export function ProductForm({
           <Field id="countryOfOrigin" label="کشور سازنده" error={errors.countryOfOrigin}>
             <input id="countryOfOrigin" className="field" value={values.countryOfOrigin} onChange={(e) => set('countryOfOrigin', e.target.value)} />
           </Field>
+          <Field id="productFamily" label="خانوادهٔ قطعه" error={errors.productFamily}
+            hint="قطعات هم‌خانواده در صفحهٔ محصول به‌عنوان جایگزین پیشنهاد می‌شوند.">
+            <input id="productFamily" dir="ltr" className="field latin-id" value={values.productFamily}
+              onChange={(e) => set('productFamily', e.target.value)} placeholder="brake-pad-front-206" />
+          </Field>
           <div className="sm:col-span-2">
             <Field id="descriptionFa" label="توضیحات فارسی" error={errors.descriptionFa}>
               <textarea id="descriptionFa" rows={5} className="field resize-y" value={values.descriptionFa}
@@ -269,11 +300,16 @@ export function ProductForm({
             )
           )}
 
-          <div className="content-end">
+          <div className="content-end space-y-2">
             <label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-sm">
               <input type="checkbox" checked={values.isActive} onChange={(e) => set('isActive', e.target.checked)}
                 className="size-4 rounded border-steel-300 text-steel-700" />
               انتشار در فروشگاه
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-sm">
+              <input type="checkbox" checked={values.allowBackorder} onChange={(e) => set('allowBackorder', e.target.checked)}
+                className="size-4 rounded border-steel-300 text-steel-700" />
+              اجازهٔ پیش‌خرید بدون موجودی
             </label>
           </div>
         </div>
@@ -372,56 +408,142 @@ export function ProductForm({
 
       <Panel title="سازگاری با خودرو" action={
         <Button type="button" size="sm" variant="secondary"
-          onClick={() => setFitments((r) => [...r, { vehicleModelId: '', vehicleEngineId: '', yearFrom: '', yearTo: '' }])}>
+          onClick={() => setFitments((r) => [...r, {
+            vehicleModelId: '', vehicleTrimId: '', vehicleEngineId: '',
+            yearFrom: '', yearTo: '', fitmentType: 'DIRECT', note: '',
+          }])}>
           افزودن خودرو
         </Button>
       }>
         {fitments.length === 0 && (
           <p className="text-sm text-muted">
-            هیچ خودرویی ثبت نشده است. بدون این اطلاعات، کالا در فیلتر «انتخاب بر اساس خودرو» دیده نمی‌شود.
+            هیچ خودرویی ثبت نشده است. بدون این اطلاعات، کالا در فیلتر «انتخاب بر اساس خودرو» دیده نمی‌شود و
+            پاسخ «سازگار است؟» در صفحهٔ محصول «اطلاعات کافی نیست» خواهد بود.
           </p>
         )}
         <ul className="space-y-2">
           {fitments.map((fit, i) => {
             const model = allModels.find((m) => m.id === fit.vehicleModelId);
-            const engines = vehicles.flatMap((b) => b.models).find((m) => m.id === fit.vehicleModelId);
+            const update = (patch: Partial<FitmentRow>) =>
+              setFitments((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+            return (
+              <li key={i} className={`rounded-lg border p-3 ${
+                fit.fitmentType === 'NOT_COMPATIBLE' ? 'border-red-200 bg-red-50/50' : 'border-line'
+              }`}>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-44 flex-1">
+                    <label htmlFor={`fit-m-${i}`} className="label">مدل خودرو</label>
+                    <select id={`fit-m-${i}`} className="field h-10" value={fit.vehicleModelId}
+                      onChange={(e) => update({ vehicleModelId: e.target.value, vehicleTrimId: '', vehicleEngineId: '' })}>
+                      <option value="">— انتخاب کنید —</option>
+                      {vehicles.map((brand) => (
+                        <optgroup key={brand.slug} label={brand.nameFa}>
+                          {brand.models.map((m) => <option key={m.id} value={m.id}>{m.nameFa}</option>)}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-36">
+                    <label htmlFor={`fit-t-${i}`} className="label">تیپ</label>
+                    <TrimSelect id={`fit-t-${i}`} modelSlug={model?.slug ?? null}
+                      value={fit.vehicleTrimId} onChange={(v) => update({ vehicleTrimId: v })} />
+                  </div>
+                  <div className="w-36">
+                    <label htmlFor={`fit-e-${i}`} className="label">موتور</label>
+                    <EngineSelect id={`fit-e-${i}`} modelSlug={model?.slug ?? null}
+                      value={fit.vehicleEngineId} onChange={(v) => update({ vehicleEngineId: v })} />
+                  </div>
+                  <div className="w-24">
+                    <label htmlFor={`fit-yf-${i}`} className="label">از سال</label>
+                    <input id={`fit-yf-${i}`} inputMode="numeric" className="field h-10 tabular-nums"
+                      value={fit.yearFrom} onChange={(e) => update({ yearFrom: e.target.value })} placeholder="۱۳۹۰" />
+                  </div>
+                  <div className="w-24">
+                    <label htmlFor={`fit-yt-${i}`} className="label">تا سال</label>
+                    <input id={`fit-yt-${i}`} inputMode="numeric" className="field h-10 tabular-nums"
+                      value={fit.yearTo} onChange={(e) => update({ yearTo: e.target.value })} placeholder="۱۴۰۲" />
+                  </div>
+                  <button type="button" onClick={() => setFitments((r) => r.filter((_, j) => j !== i))}
+                    aria-label={`حذف خودروی ${i + 1}`} className="mb-1 rounded-lg p-2 text-steel-400 hover:bg-red-50 hover:text-red-600">
+                    <CloseIcon className="size-4" />
+                  </button>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-end gap-2">
+                  <div className="w-44">
+                    <label htmlFor={`fit-type-${i}`} className="label">نوع سازگاری</label>
+                    <select id={`fit-type-${i}`} className="field h-10" value={fit.fitmentType}
+                      onChange={(e) => update({ fitmentType: e.target.value as FitmentRow['fitmentType'] })}>
+                      <option value="DIRECT">سازگار</option>
+                      <option value="WITH_MODIFICATION">سازگار با تغییر</option>
+                      <option value="NOT_COMPATIBLE">ناسازگار (ثبت صریح)</option>
+                    </select>
+                  </div>
+                  <div className="min-w-48 flex-1">
+                    <label htmlFor={`fit-note-${i}`} className="label">توضیح (به مشتری نمایش داده می‌شود)</label>
+                    <input id={`fit-note-${i}`} className="field h-10" value={fit.note}
+                      onChange={(e) => update({ note: e.target.value })}
+                      placeholder="مثال: نیازمند تعویض واشر" />
+                  </div>
+                </div>
+
+                {fit.fitmentType === 'NOT_COMPATIBLE' && (
+                  <p className="hint mt-1.5 text-red-700">
+                    این ردیف «ناسازگاری» را صریحاً ثبت می‌کند و بر ردیف‌های عمومی‌تر اولویت دارد.
+                    نبود ردیف به معنی ناسازگاری نیست؛ فقط «اطلاعات کافی نیست».
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <p className="hint mt-3">
+          ردیف بدون تیپ/موتور یعنی «همهٔ تیپ‌ها و موتورها». ردیف دقیق‌تر بر ردیف عمومی‌تر اولویت دارد.
+        </p>
+      </Panel>
+
+      <Panel title="کدهای معادل و جایگزین" action={
+        <Button type="button" size="sm" variant="secondary"
+          onClick={() => setReferences((r) => [...r, {
+            relationType: 'CROSS_REFERENCE', targetNumber: '', targetBrand: '', note: '',
+          }])}>
+          افزودن کد
+        </Button>
+      }>
+        {references.length === 0 && (
+          <p className="text-sm text-muted">
+            کد قطعهٔ قدیمی یا کد سازندگان دیگر را اینجا ثبت کنید تا مشتری با جست‌وجوی آن کد،
+            همین کالا را پیدا کند.
+          </p>
+        )}
+        <ul className="space-y-2">
+          {references.map((ref, i) => {
+            const update = (patch: Partial<ReferenceRow>) =>
+              setReferences((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
             return (
               <li key={i} className="flex flex-wrap items-end gap-2 rounded-lg border border-line p-3">
-                <div className="min-w-44 flex-1">
-                  <label htmlFor={`fit-m-${i}`} className="label">مدل خودرو</label>
-                  <select id={`fit-m-${i}`} className="field h-10" value={fit.vehicleModelId}
-                    onChange={(e) => setFitments((r) => r.map((x, j) => (j === i ? { ...x, vehicleModelId: e.target.value, vehicleEngineId: '' } : x)))}>
-                    <option value="">— انتخاب کنید —</option>
-                    {vehicles.map((brand) => (
-                      <optgroup key={brand.slug} label={brand.nameFa}>
-                        {brand.models.map((m) => <option key={m.id} value={m.id}>{m.nameFa}</option>)}
-                      </optgroup>
-                    ))}
+                <div className="w-48">
+                  <label htmlFor={`ref-t-${i}`} className="label">نوع رابطه</label>
+                  <select id={`ref-t-${i}`} className="field h-10" value={ref.relationType}
+                    onChange={(e) => update({ relationType: e.target.value as ReferenceRow['relationType'] })}>
+                    <option value="CROSS_REFERENCE">کد معادل سازندهٔ دیگر</option>
+                    <option value="SUPERSEDES">جایگزین قطعهٔ قدیمی</option>
+                    <option value="SUPERSEDED_BY">جایگزین‌شده با</option>
+                    <option value="ALTERNATE">قطعهٔ معادل</option>
                   </select>
                 </div>
+                <div className="min-w-36 flex-1">
+                  <label htmlFor={`ref-n-${i}`} className="label">کد قطعه</label>
+                  <input id={`ref-n-${i}`} dir="ltr" className="field latin-id h-10" value={ref.targetNumber}
+                    onChange={(e) => update({ targetNumber: e.target.value })} placeholder="GDB1330" />
+                </div>
                 <div className="w-40">
-                  <label htmlFor={`fit-e-${i}`} className="label">موتور / تیپ</label>
-                  <EngineSelect
-                    id={`fit-e-${i}`}
-                    modelSlug={model?.slug ?? null}
-                    value={fit.vehicleEngineId}
-                    onChange={(v) => setFitments((r) => r.map((x, j) => (j === i ? { ...x, vehicleEngineId: v } : x)))}
-                  />
+                  <label htmlFor={`ref-b-${i}`} className="label">سازنده</label>
+                  <input id={`ref-b-${i}`} className="field h-10" value={ref.targetBrand}
+                    onChange={(e) => update({ targetBrand: e.target.value })} placeholder="TRW" />
                 </div>
-                <div className="w-28">
-                  <label htmlFor={`fit-yf-${i}`} className="label">از سال</label>
-                  <input id={`fit-yf-${i}`} inputMode="numeric" className="field h-10 tabular-nums" value={fit.yearFrom}
-                    placeholder={engines?.yearFrom ? String(engines.yearFrom) : '۱۳۹۰'}
-                    onChange={(e) => setFitments((r) => r.map((x, j) => (j === i ? { ...x, yearFrom: e.target.value } : x)))} />
-                </div>
-                <div className="w-28">
-                  <label htmlFor={`fit-yt-${i}`} className="label">تا سال</label>
-                  <input id={`fit-yt-${i}`} inputMode="numeric" className="field h-10 tabular-nums" value={fit.yearTo}
-                    placeholder={engines?.yearTo ? String(engines.yearTo) : '۱۴۰۲'}
-                    onChange={(e) => setFitments((r) => r.map((x, j) => (j === i ? { ...x, yearTo: e.target.value } : x)))} />
-                </div>
-                <button type="button" onClick={() => setFitments((r) => r.filter((_, j) => j !== i))}
-                  aria-label={`حذف خودروی ${i + 1}`} className="mb-1 rounded-lg p-2 text-steel-400 hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => setReferences((r) => r.filter((_, j) => j !== i))}
+                  aria-label={`حذف کد ${i + 1}`} className="mb-1 rounded-lg p-2 text-steel-400 hover:bg-red-50 hover:text-red-600">
                   <CloseIcon className="size-4" />
                 </button>
               </li>
@@ -447,13 +569,36 @@ export function ProductForm({
       </Panel>
 
       <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center gap-3 border-t border-line bg-white/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:px-5">
-        <Button type="submit" variant="signal" size="lg" disabled={busy}>
+        <Button type="submit" variant="accent" size="lg" disabled={busy}>
           {busy ? 'در حال ذخیره…' : productId ? 'ذخیرهٔ تغییرات' : 'ایجاد کالا'}
         </Button>
         <Button type="button" variant="ghost" onClick={() => router.back()}>انصراف</Button>
         {values.sku && <LatinId className="ms-auto text-xs text-muted">{values.sku}</LatinId>}
       </div>
     </form>
+  );
+}
+
+/** Loads the trims of the selected model on demand. */
+function TrimSelect({
+  id, modelSlug, value, onChange,
+}: { id: string; modelSlug: string | null; value: string; onChange: (v: string) => void }) {
+  const [trims, setTrims] = useState<{ id: string; code: string; nameFa: string }[]>([]);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+
+  if (modelSlug && loadedFor !== modelSlug) {
+    setLoadedFor(modelSlug);
+    void fetch(`/api/vehicles/${encodeURIComponent(modelSlug)}/trims`)
+      .then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((b: { data?: { id: string; code: string; nameFa: string }[] }) => setTrims(b.data ?? []))
+      .catch(() => setTrims([]));
+  }
+
+  return (
+    <select id={id} className="field h-10" value={value} onChange={(e) => onChange(e.target.value)} disabled={!modelSlug}>
+      <option value="">همهٔ تیپ‌ها</option>
+      {trims.map((trim) => <option key={trim.id} value={trim.id}>{trim.nameFa}</option>)}
+    </select>
   );
 }
 

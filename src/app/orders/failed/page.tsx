@@ -35,7 +35,7 @@ export default async function PaymentFailedPage({
       )}
 
       <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <LinkButton href="/cart" variant="signal">بازگشت به سبد خرید</LinkButton>
+        <LinkButton href="/cart" variant="accent">بازگشت به سبد خرید</LinkButton>
         <LinkButton href="/contact" variant="secondary">تماس با پشتیبانی</LinkButton>
       </div>
     </div>

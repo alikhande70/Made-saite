@@ -8,12 +8,18 @@ import { eq } from 'drizzle-orm';
 import { Breadcrumbs } from '@/components/ui';
 import { ProductListing, type RawSearchParams } from '@/components/product-listing';
 import { siteUrl } from '@/application/settings-service';
+import { listingRobots } from '@/lib/seo';
 import { toPersianDigits } from '@/lib/fa';
 
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
-  const { slug } = await params;
+export async function generateMetadata({
+  params, searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<RawSearchParams>;
+}): Promise<Metadata> {
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
   const category = await getCategoryBySlug(decodeURIComponent(slug));
   if (!category) return { title: 'دسته یافت نشد' };
 
@@ -21,6 +27,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     title: category.seoTitle ?? category.nameFa,
     description: category.seoDescription ?? category.description ?? `خرید ${category.nameFa} با مشخصات فنی کامل.`,
     alternates: { canonical: `/categories/${encodeURIComponent(category.slug)}` },
+    // Filtered variants of a category listing are noindex, follow (ADR-004).
+    robots: listingRobots(query),
     openGraph: {
       title: category.nameFa,
       description: category.description ?? undefined,

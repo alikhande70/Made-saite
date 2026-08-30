@@ -4,7 +4,7 @@ import { getCategoryTree, getVehicleTree, listFeatured, searchProducts } from '@
 import { getStoreProfile } from '@/application/settings-service';
 import { productQuerySchema } from '@/lib/validation';
 import { ProductRail } from '@/components/product-card';
-import { VehiclePicker } from '@/components/vehicle-picker';
+import { VehicleSelector } from '@/components/vehicle-selector';
 import { LinkButton, SectionHeading, ChevronEnd, ShieldIcon, TruckIcon, WrenchIcon, BoxIcon } from '@/components/ui';
 import { toPersianDigits } from '@/lib/fa';
 
@@ -30,24 +30,30 @@ export default async function HomePage() {
 
   return (
     <>
-      {/* Hero: the vehicle picker is the primary task, so it leads. */}
-      <section className="bg-steel-900 text-white">
+      {/*
+        * Hero: choosing a vehicle is the primary task, so it leads.
+        *
+        * This is one of the four surfaces allowed to use frosted glass. The
+        * selector panel itself stays opaque white — it holds form controls,
+        * and legibility of a control beats the effect behind it.
+        */}
+      <section className="carbon-field text-white">
         <div className="container-page grid gap-8 py-10 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:py-14">
           <div>
-            <p className="mb-3 inline-flex items-center gap-2 rounded-full bg-steel-800 px-3 py-1 text-xs font-semibold text-signal-300">
+            <p className="glass-dark mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold text-accent-300">
               <WrenchIcon className="size-3.5" />
               بیش از {toPersianDigits(categories.reduce((n, c) => n + c.productCount, 0))} قطعه در انبار
             </p>
             <h1 className="text-2xl font-extrabold leading-[1.5] sm:text-3xl lg:text-4xl lg:leading-[1.4]">
               قطعهٔ درست برای خودروی شما،
-              <span className="text-signal-400"> بدون حدس و خطا</span>
+              <span className="text-accent-400"> بدون حدس و خطا</span>
             </h1>
             <p className="mt-4 max-w-xl text-sm leading-relaxed text-steel-200 sm:text-base">
               خودرو، سال ساخت و موتور خود را انتخاب کنید تا فقط قطعاتی را ببینید که دقیقاً روی آن نصب می‌شوند.
               جست‌وجو با نام قطعه، کد فنی یا شمارهٔ OEM هم پشتیبانی می‌شود.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <LinkButton href="/categories" variant="signal" size="lg">
+              <LinkButton href="/categories" variant="accent" size="lg">
                 مشاهدهٔ دسته‌بندی‌ها
                 <ChevronEnd className="size-4" />
               </LinkButton>
@@ -55,8 +61,8 @@ export default async function HomePage() {
             </div>
           </div>
 
-          <div className="rounded-xl bg-white p-4 text-ink shadow-pop sm:p-5">
-            <VehiclePicker vehicles={vehicles} />
+          <div className="rounded-xl border border-line bg-white p-4 text-ink shadow-pop sm:p-5">
+            <VehicleSelector vehicles={vehicles} submitLabel="نمایش قطعات سازگار" redirectTo="/products" />
           </div>
         </div>
       </section>

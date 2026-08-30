@@ -15,6 +15,20 @@
       "when": 1788043754430,
       "tag": "0001_search_fa",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788122367521,
+      "tag": "0002_fitment_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788122378160,
+      "tag": "0003_drop_legacy_compat",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { skuSchema, tomanSchema, uuidSchema, imageUrlSchema } from '@/lib/validation';
 import { createProduct, listProductsAdmin } from '@/application/admin-service';
 import { adminRoute } from '@/lib/admin-http';
+import { recordAudit } from '@/application/audit-service';
 import { jsonOk, readJson } from '@/lib/http';
 
 const nullableString = (max: number) =>
@@ -40,10 +41,25 @@ export const productBodySchema = z.object({
   })).max(60).default([]),
   fitments: z.array(z.object({
     vehicleModelId: uuidSchema,
+    vehicleTrimId: uuidSchema.optional().nullable(),
     vehicleEngineId: uuidSchema.optional().nullable(),
     yearFrom: z.coerce.number().int().min(1300).max(1450).optional().nullable(),
     yearTo: z.coerce.number().int().min(1300).max(1450).optional().nullable(),
-  })).max(200).default([]),
+    fitmentType: z.enum(['DIRECT', 'WITH_MODIFICATION', 'NOT_COMPATIBLE']).default('DIRECT'),
+    note: z.string().trim().max(240).optional().nullable(),
+  })).max(500).default([]),
+  references: z.array(z.object({
+    relationType: z.enum(['SUPERSEDES', 'SUPERSEDED_BY', 'ALTERNATE', 'CROSS_REFERENCE']),
+    targetProductId: uuidSchema.optional().nullable(),
+    targetNumber: z.string().trim().max(80).optional().nullable(),
+    targetBrand: z.string().trim().max(140).optional().nullable(),
+    note: z.string().trim().max(240).optional().nullable(),
+  }).refine(
+    (r) => Boolean(r.targetProductId || r.targetNumber),
+    'برای هر کد معادل، شمارهٔ قطعه یا کالای مقصد الزامی است.',
+  )).max(200).default([]),
+  productFamily: nullableString(140),
+  allowBackorder: z.boolean().default(false),
   initialStock: z.coerce.number().int().min(0).max(100_000).optional(),
 });
 
@@ -60,7 +76,17 @@ export const GET = adminRoute(async (request) => {
   );
 });
 
-export const POST = adminRoute(async (request, admin) => {
+export const POST = adminRoute(async (request, admin, _ctx, audit) => {
   const input = productBodySchema.parse(await readJson(request));
-  return jsonOk(await createProduct(input, admin.id), { status: 201 });
+  const created = await createProduct(input, admin.id);
+  await recordAudit({
+    actorUserId: admin.id,
+    action: 'product.create',
+    entityType: 'product',
+    entityId: created.id,
+    summary: `کالای «${input.titleFa}» با کد ${input.sku} ایجاد شد.`,
+    metadata: { sku: input.sku, price: input.price, isActive: input.isActive },
+    ipHash: audit.ipHash,
+  });
+  return jsonOk(created, { status: 201 });
 });

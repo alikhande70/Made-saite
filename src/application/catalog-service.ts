@@ -17,13 +17,16 @@ import { getDb, type Database } from '@/infrastructure/db/client';
 import {
   brands,
   categories,
+  productFitments,
   productImages,
   productSpecs,
-  productVehicleCompat,
   products,
   vehicleBrands,
+  vehicleConfigurations,
   vehicleEngines,
+  vehicleGenerations,
   vehicleModels,
+  vehicleTrims,
 } from '@/infrastructure/db/schema';
 import type { ProductQuery } from '@/lib/validation';
 import { effectivePrice } from '@/domain/pricing';
@@ -150,25 +153,43 @@ function buildFilters(query: ProductQuery): SQL[] {
     conditions.push(sql`coalesce(inv.quantity_on_hand, 0) - coalesce(inv.quantity_reserved, 0) > 0`);
   }
 
-  // Vehicle fitment: model (+ optional engine, + optional Jalali year window).
+  /*
+   * Vehicle fitment. A fitment recorded against a broad configuration must still
+   * match a narrower request, so a NULL narrowing column reads as "any value".
+   * A configuration that is explicitly NOT_COMPATIBLE is excluded rather than
+   * merely unranked — showing a part we know does not fit is worse than showing
+   * nothing.
+   */
   if (query.vehicleModel) {
     const engineCond = query.vehicleEngine
-      ? sql` and (pvc.vehicle_engine_id is null or pvc.vehicle_engine_id = (
+      ? sql` and (vc.vehicle_engine_id is null or vc.vehicle_engine_id = (
             select ve.id from vehicle_engines ve
             join vehicle_models vm2 on vm2.id = ve.vehicle_model_id
             where vm2.slug = ${query.vehicleModel} and ve.code = ${query.vehicleEngine}
             limit 1))`
       : sql``;
+    const trimCond = query.vehicleTrim
+      ? sql` and (vc.vehicle_trim_id is null or vc.vehicle_trim_id = (
+            select vt.id from vehicle_trims vt
+            join vehicle_models vm3 on vm3.id = vt.vehicle_model_id
+            where vm3.slug = ${query.vehicleModel} and vt.code = ${query.vehicleTrim}
+            limit 1))`
+      : sql``;
     const yearCond =
       typeof query.vehicleYear === 'number'
-        ? sql` and (pvc.year_from is null or pvc.year_from <= ${query.vehicleYear})
-               and (pvc.year_to   is null or pvc.year_to   >= ${query.vehicleYear})`
+        ? sql` and (vc.year_from is null or vc.year_from <= ${query.vehicleYear})
+               and (vc.year_to   is null or vc.year_to   >= ${query.vehicleYear})`
         : sql``;
 
-    conditions.push(sql`exists (
-      select 1 from product_vehicle_compat pvc
-      join vehicle_models vm on vm.id = pvc.vehicle_model_id
-      where pvc.product_id = p.id and vm.slug = ${query.vehicleModel}${engineCond}${yearCond}
+    const matches = sql`
+      from product_fitments pf
+      join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+      join vehicle_models vm on vm.id = vc.vehicle_model_id
+      where pf.product_id = p.id and vm.slug = ${query.vehicleModel}${engineCond}${trimCond}${yearCond}`;
+
+    conditions.push(sql`(
+      exists (select 1 ${matches} and pf.fitment_type <> 'NOT_COMPATIBLE')
+      and not exists (select 1 ${matches} and pf.fitment_type = 'NOT_COMPATIBLE')
     )`);
   }
 
@@ -186,12 +207,25 @@ function buildSearch(term: string | undefined): { where: SQL; rank: SQL } | null
   // `<%` is pg_trgm's *word* similarity: it scores the query against the best
   // matching run of words inside the document rather than against the whole
   // blob, which is what makes «فیلتر روغنن» still find «فیلتر روغن».
+  /*
+   * Superseded and cross-reference numbers are matched too (ADR-003): customers
+   * search using the number printed on the old part, which is frequently not the
+   * number we sell it under.
+   */
+  const referenceMatch = sql`exists (
+    select 1 from product_references pr
+    where pr.product_id = p.id
+      and pr.target_number is not null
+      and md_normalize_fa(pr.target_number) like '%' || ${norm} || '%'
+  )`;
+
   const where = sql`(
     p.search_doc @@ ${tsq}
     or ${norm} <% p.search_plain
     or p.search_plain like '%' || ${norm} || '%'
     or md_normalize_fa(coalesce(b.name_fa, '')) like '%' || ${norm} || '%'
     or md_normalize_fa(coalesce(c.name_fa, '')) like '%' || ${norm} || '%'
+    or ${referenceMatch}
   )`;
 
   // Exact part-number hits dominate, then an explicit brand/category name hit,
@@ -201,6 +235,10 @@ function buildSearch(term: string | undefined): { where: SQL; rank: SQL } | null
              or md_normalize_fa(coalesce(p.oem_number, '')) = ${norm}
              or md_normalize_fa(coalesce(p.mpn, '')) = ${norm}
            then 100 else 0 end
+    + case when exists (
+             select 1 from product_references pr2
+             where pr2.product_id = p.id and md_normalize_fa(coalesce(pr2.target_number, '')) = ${norm}
+           ) then 80 else 0 end
     + case when md_normalize_fa(coalesce(b.name_fa, '')) = ${norm}
              or md_normalize_fa(coalesce(c.name_fa, '')) = ${norm}
            then 40 else 0 end
@@ -391,11 +429,14 @@ export interface CompatibilityEntry {
   vehicleBrandSlug: string;
   modelName: string;
   modelSlug: string;
+  generationName: string | null;
+  trimName: string | null;
   engineCode: string | null;
   engineName: string | null;
   yearFrom: number | null;
   yearTo: number | null;
   note: string | null;
+  fitmentType: 'DIRECT' | 'WITH_MODIFICATION' | 'NOT_COMPATIBLE';
 }
 
 export interface ProductDetail {
@@ -484,17 +525,23 @@ export async function getProductBySlug(
         vehicleBrandSlug: vehicleBrands.slug,
         modelName: vehicleModels.nameFa,
         modelSlug: vehicleModels.slug,
+        generationName: vehicleGenerations.nameFa,
+        trimName: vehicleTrims.nameFa,
         engineCode: vehicleEngines.code,
         engineName: vehicleEngines.nameFa,
-        yearFrom: productVehicleCompat.yearFrom,
-        yearTo: productVehicleCompat.yearTo,
-        note: productVehicleCompat.note,
+        yearFrom: vehicleConfigurations.yearFrom,
+        yearTo: vehicleConfigurations.yearTo,
+        note: productFitments.note,
+        fitmentType: productFitments.fitmentType,
       })
-      .from(productVehicleCompat)
-      .innerJoin(vehicleModels, eq(vehicleModels.id, productVehicleCompat.vehicleModelId))
+      .from(productFitments)
+      .innerJoin(vehicleConfigurations, eq(vehicleConfigurations.id, productFitments.vehicleConfigurationId))
+      .innerJoin(vehicleModels, eq(vehicleModels.id, vehicleConfigurations.vehicleModelId))
       .innerJoin(vehicleBrands, eq(vehicleBrands.id, vehicleModels.vehicleBrandId))
-      .leftJoin(vehicleEngines, eq(vehicleEngines.id, productVehicleCompat.vehicleEngineId))
-      .where(eq(productVehicleCompat.productId, p.id))
+      .leftJoin(vehicleGenerations, eq(vehicleGenerations.id, vehicleConfigurations.vehicleGenerationId))
+      .leftJoin(vehicleTrims, eq(vehicleTrims.id, vehicleConfigurations.vehicleTrimId))
+      .leftJoin(vehicleEngines, eq(vehicleEngines.id, vehicleConfigurations.vehicleEngineId))
+      .where(eq(productFitments.productId, p.id))
       .orderBy(asc(vehicleBrands.nameFa), asc(vehicleModels.nameFa)),
     row.category?.parentId
       ? db
@@ -603,9 +650,13 @@ export async function getSimilarByVehicle(
     left join inventory inv on inv.product_id = p.id
     where p.is_active = true and p.id <> ${productId}
       and exists (
-        select 1 from product_vehicle_compat a
-        join product_vehicle_compat x on x.vehicle_model_id = a.vehicle_model_id
+        select 1
+        from product_fitments a
+        join vehicle_configurations ac on ac.id = a.vehicle_configuration_id
+        join vehicle_configurations xc on xc.vehicle_model_id = ac.vehicle_model_id
+        join product_fitments x on x.vehicle_configuration_id = xc.id
         where a.product_id = ${productId} and x.product_id = p.id
+          and a.fitment_type <> 'NOT_COMPATIBLE' and x.fitment_type <> 'NOT_COMPATIBLE'
       )
     order by p.published_at desc nulls last, p.id asc
     limit ${limit}
@@ -785,6 +836,30 @@ export async function getEnginesForModel(modelSlug: string, db: Database = getDb
     .orderBy(asc(vehicleEngines.code));
 }
 
+export async function getTrimsForModel(modelSlug: string, db: Database = getDb()) {
+  return db
+    .select({ id: vehicleTrims.id, code: vehicleTrims.code, nameFa: vehicleTrims.nameFa })
+    .from(vehicleTrims)
+    .innerJoin(vehicleModels, eq(vehicleModels.id, vehicleTrims.vehicleModelId))
+    .where(and(eq(vehicleModels.slug, modelSlug), eq(vehicleTrims.isActive, true)))
+    .orderBy(asc(vehicleTrims.nameFa));
+}
+
+export async function getGenerationsForModel(modelSlug: string, db: Database = getDb()) {
+  return db
+    .select({
+      id: vehicleGenerations.id,
+      code: vehicleGenerations.code,
+      nameFa: vehicleGenerations.nameFa,
+      yearFrom: vehicleGenerations.yearFrom,
+      yearTo: vehicleGenerations.yearTo,
+    })
+    .from(vehicleGenerations)
+    .innerJoin(vehicleModels, eq(vehicleModels.id, vehicleGenerations.vehicleModelId))
+    .where(and(eq(vehicleModels.slug, modelSlug), eq(vehicleGenerations.isActive, true)))
+    .orderBy(asc(vehicleGenerations.yearFrom));
+}
+
 export async function getVehicleModelBySlug(slug: string, db: Database = getDb()) {
   const [row] = await db
     .select({
@@ -814,4 +889,118 @@ export async function listAllActiveSlugs(db: Database = getDb()) {
     db.select({ slug: brands.slug }).from(brands).where(eq(brands.isActive, true)),
   ]);
   return { products: productRows, categories: categoryRows, brands: brandRows };
+}
+
+/* ── vehicle × category landing pages (ADR-004) ───────────────────────── */
+
+/**
+ * A curated `/parts/{category}/{vehicle}` page.
+ *
+ * These are the only faceted URLs allowed into the index. Their inventory is
+ * derived from real fitment rows, so the set shrinks automatically when parts
+ * are delisted rather than leaving orphaned pages behind.
+ */
+export interface VehicleLandingPage {
+  categorySlug: string;
+  categoryNameFa: string;
+  modelSlug: string;
+  modelNameFa: string;
+  vehicleBrandNameFa: string;
+  productCount: number;
+}
+
+/**
+ * The minimum number of live products a pairing needs before it is worth
+ * indexing. Below this a page is still served — a customer following a link
+ * must not hit a 404 — but it is `noindex` and absent from the sitemap.
+ */
+export const LANDING_PAGE_MIN_PRODUCTS = 3;
+
+/**
+ * Counts live products per (category, vehicle model), excluding any pairing
+ * where the only fitment row is an exclusion.
+ *
+ * `minProducts = 0` returns every non-empty pairing, which is what the page
+ * itself needs to decide indexability; the sitemap passes the threshold.
+ */
+export async function listVehicleLandingPages(
+  minProducts = LANDING_PAGE_MIN_PRODUCTS,
+  db: Database = getDb(),
+): Promise<VehicleLandingPage[]> {
+  const rows = await db.execute<{
+    category_slug: string;
+    category_name: string;
+    model_slug: string;
+    model_name: string;
+    vehicle_brand_name: string;
+    product_count: number;
+  }>(sql`
+    select
+      c.slug          as category_slug,
+      c.name_fa       as category_name,
+      vm.slug         as model_slug,
+      vm.name_fa      as model_name,
+      vb.name_fa      as vehicle_brand_name,
+      count(distinct p.id)::int as product_count
+    from products p
+    join categories c              on c.id = p.category_id and c.is_active = true
+    join product_fitments pf       on pf.product_id = p.id and pf.fitment_type <> 'NOT_COMPATIBLE'
+    join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+    join vehicle_models vm         on vm.id = vc.vehicle_model_id and vm.is_active = true
+    join vehicle_brands vb         on vb.id = vm.vehicle_brand_id and vb.is_active = true
+    where p.is_active = true
+    group by c.slug, c.name_fa, vm.slug, vm.name_fa, vb.name_fa
+    having count(distinct p.id) >= ${minProducts}
+    order by count(distinct p.id) desc, c.name_fa, vm.name_fa
+  `);
+
+  return rows.rows.map((r) => ({
+    categorySlug: r.category_slug,
+    categoryNameFa: r.category_name,
+    modelSlug: r.model_slug,
+    modelNameFa: r.model_name,
+    vehicleBrandNameFa: r.vehicle_brand_name,
+    productCount: Number(r.product_count),
+  }));
+}
+
+/** One landing page, or null when either side of the pairing does not exist. */
+export async function getVehicleLandingPage(
+  categorySlug: string,
+  modelSlug: string,
+  db: Database = getDb(),
+): Promise<VehicleLandingPage | null> {
+  const [category] = await db
+    .select({ slug: categories.slug, nameFa: categories.nameFa })
+    .from(categories)
+    .where(and(eq(categories.slug, categorySlug), eq(categories.isActive, true)))
+    .limit(1);
+  if (!category) return null;
+
+  const [model] = await db
+    .select({ slug: vehicleModels.slug, nameFa: vehicleModels.nameFa, brandNameFa: vehicleBrands.nameFa })
+    .from(vehicleModels)
+    .innerJoin(vehicleBrands, eq(vehicleBrands.id, vehicleModels.vehicleBrandId))
+    .where(and(eq(vehicleModels.slug, modelSlug), eq(vehicleModels.isActive, true)))
+    .limit(1);
+  if (!model) return null;
+
+  const counted = await db.execute<{ product_count: number }>(sql`
+    select count(distinct p.id)::int as product_count
+    from products p
+    join categories c              on c.id = p.category_id
+    join product_fitments pf       on pf.product_id = p.id and pf.fitment_type <> 'NOT_COMPATIBLE'
+    join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+    join vehicle_models vm         on vm.id = vc.vehicle_model_id
+    where p.is_active = true and c.slug = ${categorySlug} and vm.slug = ${modelSlug}
+  `);
+
+  return {
+    categorySlug: category.slug,
+    categoryNameFa: category.nameFa,
+    modelSlug: model.slug,
+    modelNameFa: model.nameFa,
+    vehicleBrandNameFa: model.brandNameFa,
+    productCount: Number(counted.rows[0]?.product_count ?? 0),
+  };
 }

@@ -6,6 +6,7 @@ import {
   upsertProvinceRate, upsertShippingMethod,
 } from '@/application/shipping-service';
 import { adminRoute } from '@/lib/admin-http';
+import { recordAudit } from '@/application/audit-service';
 import { jsonOk, readJson } from '@/lib/http';
 
 const methodSchema = z.object({
@@ -35,24 +36,42 @@ const rateSchema = z.object({
 
 export const GET = adminRoute(async () => jsonOk(await listShippingMethodsAdmin()));
 
-export const POST = adminRoute(async (request) => {
+export const POST = adminRoute(async (request, admin, _ctx, audit) => {
   const body = z.discriminatedUnion('kind', [methodSchema, rateSchema]).parse(await readJson(request));
 
   if (body.kind === 'method') {
     const { kind: _kind, methodKind, ...rest } = body;
-    return jsonOk(await upsertShippingMethod({ ...rest, kind: methodKind }));
+    const row = await upsertShippingMethod({ ...rest, kind: methodKind });
+    await recordAudit({
+      actorUserId: admin.id,
+      action: 'shipping.upsert',
+      entityType: 'shipping_method',
+      entityId: row.id,
+      summary: `روش ارسال «${row.nameFa}» ذخیره شد.`,
+      metadata: { baseCost: row.baseCost, perKgCost: row.perKgCost },
+      ipHash: audit.ipHash,
+    });
+    return jsonOk(row);
   }
-  return jsonOk(
-    await upsertProvinceRate({
-      methodId: body.methodId,
-      province: body.province,
-      costOverride: body.costOverride ?? null,
-      surcharge: body.surcharge,
-    }),
-  );
+
+  const rate = await upsertProvinceRate({
+    methodId: body.methodId,
+    province: body.province,
+    costOverride: body.costOverride ?? null,
+    surcharge: body.surcharge,
+  });
+  await recordAudit({
+    actorUserId: admin.id,
+    action: 'shipping.upsert',
+    entityType: 'shipping_rate',
+    entityId: rate.id,
+    summary: `نرخ ارسال استان ${body.province} ذخیره شد.`,
+    ipHash: audit.ipHash,
+  });
+  return jsonOk(rate);
 });
 
-export const DELETE = adminRoute(async (request) => {
+export const DELETE = adminRoute(async (request, admin, _ctx, audit) => {
   const params = new URL(request.url).searchParams;
   const methodId = params.get('methodId');
   const rateId = params.get('rateId');
@@ -61,5 +80,9 @@ export const DELETE = adminRoute(async (request) => {
   } else {
     await deleteShippingMethod(uuidSchema.parse(methodId));
   }
+  await recordAudit({
+    actorUserId: admin.id, action: 'shipping.delete', entityType: 'shipping',
+    entityId: rateId ?? methodId ?? null, summary: 'روش/نرخ ارسال حذف شد.', ipHash: audit.ipHash,
+  });
   return jsonOk({ deleted: true });
 });

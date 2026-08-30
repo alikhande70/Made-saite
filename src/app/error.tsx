@@ -22,7 +22,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <p className="latin-id mt-2 text-xs text-muted">کد خطا: {error.digest}</p>
       )}
       <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <Button type="button" variant="signal" onClick={reset}>تلاش دوباره</Button>
+        <Button type="button" variant="accent" onClick={reset}>تلاش دوباره</Button>
         <LinkButton href="/" variant="secondary">صفحهٔ اصلی</LinkButton>
       </div>
     </div>

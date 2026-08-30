@@ -1,4 +1,14 @@
-export default function Loading() {
+/**
+ * Loading skeleton for the catalogue listings.
+ *
+ * Deliberately NOT a root `loading.tsx`. A Suspense boundary above a route
+ * makes Next flush the HTTP response before the page component runs, so any
+ * later `notFound()` can only swap the body — the status stays 200 and every
+ * missing product becomes a soft 404. So a loading boundary is allowed only on
+ * routes that never call `notFound()` (`/products`, `/search`); routes that
+ * can 404 render without one. See docs/ARCHITECTURE.md.
+ */
+export function ListingSkeleton() {
   return (
     <div className="container-page py-10" role="status" aria-label="در حال بارگذاری">
       <div className="space-y-4">

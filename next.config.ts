@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   poweredByHeader: false,
   serverExternalPackages: ['pg'],
-  experimental: { typedRoutes: false },
+  typedRoutes: false,
   async headers() {
     return [
       {

@@ -145,7 +145,7 @@ export function TaxonomyManager({
       {notice && <div className="mb-3"><Alert tone="success">{notice}</Alert></div>}
 
       <div className="mb-4">
-        <Button type="button" variant="signal" size="sm" onClick={startCreate}>
+        <Button type="button" variant="accent" size="sm" onClick={startCreate}>
           افزودن {noun} جدید
         </Button>
       </div>

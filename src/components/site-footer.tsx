@@ -70,7 +70,7 @@ export function SiteFooter({ store }: { store: StoreProfile }) {
         <div className="container-page flex flex-col items-center justify-between gap-2 text-center text-xs text-muted sm:flex-row sm:text-start">
           <p>© {new Date().getFullYear()} — {store.name}</p>
           {store.isDemo && (
-            <p className="rounded-md bg-signal-50 px-2.5 py-1 font-semibold text-signal-800">
+            <p className="rounded-md bg-accent-50 px-2.5 py-1 font-semibold text-accent-800">
               نسخهٔ نمایشی — داده‌ها و قیمت‌ها واقعی نیستند.
             </p>
           )}

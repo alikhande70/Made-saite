@@ -3,6 +3,7 @@ import { uuidSchema } from '@/lib/validation';
 import { withTransaction } from '@/infrastructure/db/client';
 import { adjustStock, setLowStockThreshold } from '@/application/inventory-service';
 import { adminRoute } from '@/lib/admin-http';
+import { recordAudit } from '@/application/audit-service';
 import { jsonOk, readJson } from '@/lib/http';
 
 const schema = z.object({
@@ -12,7 +13,7 @@ const schema = z.object({
   lowStockThreshold: z.coerce.number().int().min(0).max(1000).optional(),
 });
 
-export const POST = adminRoute(async (request, admin) => {
+export const POST = adminRoute(async (request, admin, _ctx, audit) => {
   const input = schema.parse(await readJson(request));
 
   const result = await withTransaction(async (tx) => {
@@ -28,5 +29,14 @@ export const POST = adminRoute(async (request, admin) => {
     return stock;
   });
 
+  await recordAudit({
+    actorUserId: admin.id,
+    action: 'inventory.adjust',
+    entityType: 'product',
+    entityId: input.productId,
+    summary: `موجودی ${input.delta > 0 ? '+' : ''}${input.delta} تغییر کرد — ${input.reason}`,
+    metadata: { delta: input.delta, reason: input.reason, onHandAfter: result.quantityOnHand },
+    ipHash: audit.ipHash,
+  });
   return jsonOk(result);
 });

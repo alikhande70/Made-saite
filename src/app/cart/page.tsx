@@ -36,7 +36,7 @@ export default async function CartPage() {
           title="سبد خرید شما خالی است"
           description="از دسته‌بندی‌ها یا جست‌وجو، قطعهٔ موردنیاز خودروی خود را پیدا کنید."
           icon={<CartIcon className="size-10" />}
-          action={<LinkButton href="/categories" variant="signal">شروع خرید</LinkButton>}
+          action={<LinkButton href="/categories" variant="accent">شروع خرید</LinkButton>}
         />
       </div>
     );
@@ -109,7 +109,7 @@ export default async function CartPage() {
                 <p className="hint mt-2">ابتدا مشکلات بالا را برطرف کنید.</p>
               </>
             ) : (
-              <LinkButton href="/checkout" variant="signal" size="lg" className="w-full">
+              <LinkButton href="/checkout" variant="accent" size="lg" className="w-full">
                 ادامه و تکمیل سفارش
               </LinkButton>
             )}

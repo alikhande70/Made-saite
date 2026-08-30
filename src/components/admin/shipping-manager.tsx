@@ -132,7 +132,7 @@ export function ShippingManager({ methods, rates }: { methods: Method[]; rates: 
       {notice && <div className="mb-3"><Alert tone="success">{notice}</Alert></div>}
 
       <div className="mb-4">
-        <Button type="button" variant="signal" size="sm"
+        <Button type="button" variant="accent" size="sm"
           onClick={() => { setEditing(null); setCreating(true); setForm(blank); }}>
           افزودن روش ارسال
         </Button>

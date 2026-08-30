@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { listAllActiveSlugs } from '@/application/catalog-service';
+import { listAllActiveSlugs, listVehicleLandingPages } from '@/application/catalog-service';
 import { siteUrl } from '@/application/settings-service';
 
 export const dynamic = 'force-dynamic';
@@ -28,9 +28,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const { products, categories, brands } = await listAllActiveSlugs();
+    /*
+     * Landing pages come from live fitment counts and only above the
+     * indexability threshold, so a pairing that loses its stock leaves the
+     * sitemap on the next request rather than lingering as a thin page.
+     */
+    const [{ products, categories, brands }, landingPages] = await Promise.all([
+      listAllActiveSlugs(),
+      listVehicleLandingPages().catch(() => []),
+    ]);
     return [
       ...staticRoutes,
+      ...landingPages.map((p) => ({
+        url: `${base}/parts/${encodeURIComponent(p.categorySlug)}/${encodeURIComponent(p.modelSlug)}`,
+        changeFrequency: 'weekly' as const,
+        priority: 0.75,
+      })),
       ...categories.map((c) => ({
         url: `${base}/categories/${encodeURIComponent(c.slug)}`,
         changeFrequency: 'weekly' as const,

@@ -55,7 +55,7 @@ export default async function AdminOrdersPage({
           اعمال
         </button>
         {(status || q) && (
-          <Link href="/admin/orders" className="h-10 content-center px-2 text-sm font-semibold text-signal-700 hover:underline">
+          <Link href="/admin/orders" className="h-10 content-center px-2 text-sm font-semibold text-accent-700 hover:underline">
             حذف فیلترها
           </Link>
         )}

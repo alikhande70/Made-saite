@@ -1,10 +1,22 @@
 import Link from 'next/link';
 import type { ProductCard as ProductCardData } from '@/application/catalog-service';
+import type { CompatibilityVerdict } from '@/domain/fitment';
 import { toPersianDigits } from '@/lib/fa';
 import { LatinId, Price, StockBadge } from './ui';
+import { VerdictChip } from './compatibility';
 import { AddToCartButton } from './add-to-cart';
 
-export function ProductCard({ product, priority = false }: { product: ProductCardData; priority?: boolean }) {
+/**
+ * Verdicts for the shopper's active vehicle, keyed by product id.
+ *
+ * All four outcomes are rendered, including «اطلاعات کافی نیست» — an unbadged
+ * card must never be readable as an implicit "fits".
+ */
+export type VerdictMap = ReadonlyMap<string, CompatibilityVerdict>;
+
+export function ProductCard({
+  product, priority = false, verdict,
+}: { product: ProductCardData; priority?: boolean; verdict?: CompatibilityVerdict }) {
   const href = `/products/${encodeURIComponent(product.slug)}`;
   const outOfStock = product.stockStatus === 'OUT_OF_STOCK';
 
@@ -45,6 +57,8 @@ export function ProductCard({ product, priority = false }: { product: ProductCar
           <Link href={href} className="line-clamp-2 hover:text-steel-700">{product.titleFa}</Link>
         </h3>
 
+        {verdict && <VerdictChip verdict={verdict} className="self-start text-[0.6875rem]" />}
+
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted">
           <span>
             کد کالا: <LatinId>{product.sku}</LatinId>
@@ -77,25 +91,27 @@ export function ProductCard({ product, priority = false }: { product: ProductCar
   );
 }
 
-export function ProductGrid({ products, priorityCount = 4 }: { products: ProductCardData[]; priorityCount?: number }) {
+export function ProductGrid({
+  products, priorityCount = 4, verdicts,
+}: { products: ProductCardData[]; priorityCount?: number; verdicts?: VerdictMap }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
       {products.map((p, i) => (
-        <ProductCard key={p.id} product={p} priority={i < priorityCount} />
+        <ProductCard key={p.id} product={p} priority={i < priorityCount} verdict={verdicts?.get(p.id)} />
       ))}
     </div>
   );
 }
 
 /** Horizontal rail used on the home and product pages. */
-export function ProductRail({ products }: { products: ProductCardData[] }) {
+export function ProductRail({ products, verdicts }: { products: ProductCardData[]; verdicts?: VerdictMap }) {
   if (products.length === 0) return null;
   return (
     <div className="scroll-x no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex gap-3 sm:gap-4">
         {products.map((p) => (
           <div key={p.id} className="w-[46%] shrink-0 sm:w-56 lg:w-60">
-            <ProductCard product={p} />
+            <ProductCard product={p} verdict={verdicts?.get(p.id)} />
           </div>
         ))}
       </div>

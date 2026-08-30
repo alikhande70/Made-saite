@@ -13,12 +13,12 @@ import { STOCK_STATUS_LABEL_FA, type StockStatus } from '@/domain/inventory';
 
 /* ── buttons ──────────────────────────────────────────────────────────── */
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'signal';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary: 'bg-steel-800 text-white hover:bg-steel-900 disabled:bg-steel-300',
-  signal: 'bg-signal-600 text-white hover:bg-signal-700 disabled:bg-signal-200',
+  accent: 'bg-accent-600 text-white hover:bg-accent-700 disabled:bg-steel-300',
   secondary: 'bg-white text-steel-800 border border-line hover:bg-steel-50 disabled:text-steel-300',
   ghost: 'bg-transparent text-steel-700 hover:bg-steel-50 disabled:text-steel-300',
   danger: 'bg-red-700 text-white hover:bg-red-800 disabled:bg-red-200',

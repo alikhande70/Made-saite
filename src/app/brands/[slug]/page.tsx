@@ -4,11 +4,17 @@ import { getBrandBySlug } from '@/application/catalog-service';
 import { Breadcrumbs } from '@/components/ui';
 import { ProductListing, type RawSearchParams } from '@/components/product-listing';
 import { siteUrl } from '@/application/settings-service';
+import { listingRobots } from '@/lib/seo';
 
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
-  const { slug } = await params;
+export async function generateMetadata({
+  params, searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<RawSearchParams>;
+}): Promise<Metadata> {
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
   const brand = await getBrandBySlug(decodeURIComponent(slug));
   if (!brand) return { title: 'برند یافت نشد' };
 
@@ -16,6 +22,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     title: brand.seoTitle ?? `قطعات ${brand.nameFa}`,
     description: brand.seoDescription ?? brand.description ?? `خرید قطعات یدکی برند ${brand.nameFa}.`,
     alternates: { canonical: `/brands/${encodeURIComponent(brand.slug)}` },
+    // Filtered variants of a brand listing are noindex, follow (ADR-004).
+    robots: listingRobots(query),
     openGraph: {
       title: `قطعات ${brand.nameFa}`,
       description: brand.description ?? undefined,

@@ -77,6 +77,34 @@ export const inventoryEventTypeEnum = pgEnum('inventory_event_type', [
 
 export const orderActorEnum = pgEnum('order_actor', ['customer', 'admin', 'system', 'gateway']);
 
+/**
+ * How a part relates to a vehicle configuration.
+ *
+ * `NOT_COMPATIBLE` is a *negative assertion*, deliberately distinct from having
+ * no row at all: absence of data means "unknown", never "does not fit". See
+ * ADR-002 and ADR-008.
+ */
+export const fitmentTypeEnum = pgEnum('fitment_type', [
+  'DIRECT',
+  'WITH_MODIFICATION',
+  'NOT_COMPATIBLE',
+]);
+
+/** Part-number relationships, following the PIES relationship types. */
+export const productReferenceTypeEnum = pgEnum('product_reference_type', [
+  'SUPERSEDES',       // this part replaces the referenced number
+  'SUPERSEDED_BY',    // this part has been replaced by the referenced number
+  'ALTERNATE',        // functionally equivalent part
+  'CROSS_REFERENCE',  // another manufacturer's number for the same part
+]);
+
+export const importStatusEnum = pgEnum('import_status', [
+  'PENDING',
+  'VALIDATED',
+  'COMMITTED',
+  'FAILED',
+]);
+
 export const shippingMethodKindEnum = pgEnum('shipping_method_kind', [
   'STANDARD', // پست پیشتاز
   'COURIER',  // پیک
@@ -249,6 +277,93 @@ export const vehicleEngines = pgTable(
   ],
 );
 
+/** A production generation of a model, e.g. «نسل دوم». Optional narrowing. */
+export const vehicleGenerations = pgTable(
+  'vehicle_generations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    vehicleModelId: uuid('vehicle_model_id')
+      .notNull()
+      .references(() => vehicleModels.id, { onDelete: 'cascade' }),
+    code: varchar('code', { length: 60 }).notNull(),
+    nameFa: varchar('name_fa', { length: 140 }).notNull(),
+    yearFrom: smallint('year_from'),
+    yearTo: smallint('year_to'),
+    isActive: boolean('is_active').notNull().default(true),
+  },
+  (t) => [
+    uniqueIndex('vehicle_generations_model_code_unique').on(t.vehicleModelId, t.code),
+    index('vehicle_generations_model_idx').on(t.vehicleModelId),
+  ],
+);
+
+/** A trim / sub-model, e.g. «تیپ ۵». The ACES SubModel equivalent. */
+export const vehicleTrims = pgTable(
+  'vehicle_trims',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    vehicleModelId: uuid('vehicle_model_id')
+      .notNull()
+      .references(() => vehicleModels.id, { onDelete: 'cascade' }),
+    vehicleGenerationId: uuid('vehicle_generation_id').references(() => vehicleGenerations.id, {
+      onDelete: 'set null',
+    }),
+    code: varchar('code', { length: 60 }).notNull(),
+    nameFa: varchar('name_fa', { length: 140 }).notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+  },
+  (t) => [
+    uniqueIndex('vehicle_trims_model_code_unique').on(t.vehicleModelId, t.code),
+    index('vehicle_trims_model_idx').on(t.vehicleModelId),
+  ],
+);
+
+/**
+ * A concrete vehicle a customer can own and a part can fit — the ACES
+ * *BaseVehicle* equivalent.
+ *
+ * Rows are created on demand (when an admin records a fitment, or a customer
+ * saves a garage vehicle) rather than by materialising every combination, so the
+ * table stays proportional to real usage.
+ *
+ * A NULL narrowing column means "not specified", which during matching reads as
+ * "applies to all values of this field" — see `application/fitment-service.ts`.
+ */
+export const vehicleConfigurations = pgTable(
+  'vehicle_configurations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    vehicleModelId: uuid('vehicle_model_id')
+      .notNull()
+      .references(() => vehicleModels.id, { onDelete: 'cascade' }),
+    vehicleGenerationId: uuid('vehicle_generation_id').references(() => vehicleGenerations.id, {
+      onDelete: 'cascade',
+    }),
+    vehicleTrimId: uuid('vehicle_trim_id').references(() => vehicleTrims.id, { onDelete: 'cascade' }),
+    vehicleEngineId: uuid('vehicle_engine_id').references(() => vehicleEngines.id, {
+      onDelete: 'cascade',
+    }),
+    /** Jalali production-year window. NULL/NULL = every year. */
+    yearFrom: smallint('year_from'),
+    yearTo: smallint('year_to'),
+    /**
+     * How many narrowing fields are set (0-4). Used to rank a more specific
+     * fitment above a broader one when both match. Maintained by the service.
+     */
+    specificity: smallint('specificity').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vehicle_configurations_model_idx').on(t.vehicleModelId),
+    index('vehicle_configurations_engine_idx').on(t.vehicleEngineId),
+    index('vehicle_configurations_trim_idx').on(t.vehicleTrimId),
+    check(
+      'vehicle_configurations_year_window_valid',
+      sql`${t.yearFrom} is null or ${t.yearTo} is null or ${t.yearFrom} <= ${t.yearTo}`,
+    ),
+  ],
+);
+
 /* ────────────────────────────── products ────────────────────────────── */
 
 export const products = pgTable(
@@ -277,6 +392,10 @@ export const products = pgTable(
     countryOfOrigin: varchar('country_of_origin', { length: 80 }),
     condition: productConditionEnum('condition').notNull().default('new'),
     installationNotes: text('installation_notes'),
+    /** Groups interchangeable parts, e.g. all «لنت ترمز جلو پژو». */
+    productFamily: varchar('product_family', { length: 140 }),
+    /** Permits ordering beyond stock on hand. Off by default. */
+    allowBackorder: boolean('allow_backorder').notNull().default(false),
     tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
     seoTitle: varchar('seo_title', { length: 200 }),
     seoDescription: varchar('seo_description', { length: 320 }),
@@ -333,38 +452,63 @@ export const productSpecs = pgTable(
 );
 
 /**
- * Fitment. A row means: this product fits this model, optionally narrowed to a
- * specific engine and/or a Jalali year window. NULL engine = all engines.
+ * Which vehicle configurations a part fits.
+ *
+ * Replaces the earlier `product_vehicle_compat` table, which could not express a
+ * trim and could not record a known-negative fit (ADR-002).
  */
-export const productVehicleCompat = pgTable(
-  'product_vehicle_compat',
+export const productFitments = pgTable(
+  'product_fitments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'cascade' }),
-    vehicleModelId: uuid('vehicle_model_id')
+    vehicleConfigurationId: uuid('vehicle_configuration_id')
       .notNull()
-      .references(() => vehicleModels.id, { onDelete: 'cascade' }),
-    vehicleEngineId: uuid('vehicle_engine_id').references(() => vehicleEngines.id, {
-      onDelete: 'cascade',
-    }),
-    yearFrom: smallint('year_from'),
-    yearTo: smallint('year_to'),
+      .references(() => vehicleConfigurations.id, { onDelete: 'cascade' }),
+    fitmentType: fitmentTypeEnum('fitment_type').notNull().default('DIRECT'),
+    /** Shown to the customer, e.g. «نیازمند تعویض واشر». */
     note: varchar('note', { length: 240 }),
+    /** Provenance: 'manual', 'import', or a supplier identifier. */
+    source: varchar('source', { length: 60 }).notNull().default('manual'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('pvc_product_idx').on(t.productId),
-    index('pvc_model_idx').on(t.vehicleModelId),
-    index('pvc_engine_idx').on(t.vehicleEngineId),
-    uniqueIndex('pvc_unique_fitment').on(
-      t.productId,
-      t.vehicleModelId,
-      sql`coalesce(${t.vehicleEngineId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
-      sql`coalesce(${t.yearFrom}, 0)`,
-      sql`coalesce(${t.yearTo}, 0)`,
+    uniqueIndex('product_fitments_unique').on(t.productId, t.vehicleConfigurationId),
+    index('product_fitments_product_idx').on(t.productId),
+    index('product_fitments_configuration_idx').on(t.vehicleConfigurationId),
+  ],
+);
+
+/**
+ * Part-number relationships (PIES-style). The target may be another product row
+ * **or** a bare number we do not stock — cross-references frequently point at
+ * other manufacturers' numbers, and those still need to be searchable so the
+ * customer lands on the part we do sell (ADR-003).
+ */
+export const productReferences = pgTable(
+  'product_references',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    relationType: productReferenceTypeEnum('relation_type').notNull(),
+    targetProductId: uuid('target_product_id').references(() => products.id, { onDelete: 'cascade' }),
+    targetNumber: varchar('target_number', { length: 80 }),
+    targetBrand: varchar('target_brand', { length: 140 }),
+    note: varchar('note', { length: 240 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('product_references_product_idx').on(t.productId),
+    index('product_references_target_product_idx').on(t.targetProductId),
+    index('product_references_number_idx').on(t.targetNumber),
+    check(
+      'product_references_has_target',
+      sql`${t.targetProductId} is not null or ${t.targetNumber} is not null`,
     ),
-    check('pvc_year_window_valid', sql`${t.yearFrom} is null or ${t.yearTo} is null or ${t.yearFrom} <= ${t.yearTo}`),
   ],
 );
 
@@ -639,6 +783,88 @@ export const orderEvents = pgTable(
   (t) => [index('order_events_order_idx').on(t.orderId, t.createdAt)],
 );
 
+/* ────────────────────────────── customer garage ────────────────────────────── */
+
+/**
+ * «گاراژ من» — vehicles a customer has saved. Selecting one lets the storefront
+ * answer "does this fit *my* car?" and filter the catalogue accordingly.
+ */
+export const customerVehicles = pgTable(
+  'customer_vehicles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    vehicleConfigurationId: uuid('vehicle_configuration_id')
+      .notNull()
+      .references(() => vehicleConfigurations.id, { onDelete: 'cascade' }),
+    nickname: varchar('nickname', { length: 80 }),
+    isDefault: boolean('is_default').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('customer_vehicles_user_idx').on(t.userId),
+    uniqueIndex('customer_vehicles_user_config_unique').on(t.userId, t.vehicleConfigurationId),
+  ],
+);
+
+/* ────────────────────────────── operations ────────────────────────────── */
+
+/**
+ * Append-only record of privileged actions.
+ *
+ * The role model is currently binary (customer/admin), so an audit trail is what
+ * makes any administrative action attributable and reversible. Granular RBAC is
+ * the next step — see ADR-007.
+ */
+export const adminAuditLog = pgTable(
+  'admin_audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Dotted action, e.g. `product.update`, `inventory.adjust`, `order.transition`. */
+    action: varchar('action', { length: 80 }).notNull(),
+    entityType: varchar('entity_type', { length: 60 }),
+    entityId: varchar('entity_id', { length: 80 }),
+    /** Human-readable Persian summary shown in the admin UI. */
+    summary: varchar('summary', { length: 400 }).notNull(),
+    /** Redacted structured context. Never contains secrets or full PII. */
+    metadata: jsonb('metadata'),
+    ipHash: varchar('ip_hash', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('admin_audit_log_created_idx').on(t.createdAt),
+    index('admin_audit_log_actor_idx').on(t.actorUserId),
+    index('admin_audit_log_entity_idx').on(t.entityType, t.entityId),
+  ],
+);
+
+/** A bulk catalogue import: validated first, committed only on request. */
+export const importJobs = pgTable(
+  'import_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    kind: varchar('kind', { length: 40 }).notNull().default('products'),
+    filename: varchar('filename', { length: 240 }),
+    status: importStatusEnum('status').notNull().default('PENDING'),
+    totalRows: integer('total_rows').notNull().default(0),
+    validRows: integer('valid_rows').notNull().default(0),
+    errorRows: integer('error_rows').notNull().default(0),
+    createdCount: integer('created_count').notNull().default(0),
+    updatedCount: integer('updated_count').notNull().default(0),
+    /** Per-row validation errors, capped before storage. */
+    errors: jsonb('errors'),
+    /** The parsed, validated rows held between validate and commit. */
+    payload: jsonb('payload'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    committedAt: timestamp('committed_at', { withTimezone: true }),
+  },
+  (t) => [index('import_jobs_created_idx').on(t.createdAt)],
+);
+
 /* ────────────────────────────── settings ────────────────────────────── */
 
 export const storeSettings = pgTable('store_settings', {
@@ -665,7 +891,8 @@ export const productRelations = relations(products, ({ one, many }) => ({
   brand: one(brands, { fields: [products.brandId], references: [brands.id] }),
   images: many(productImages),
   specs: many(productSpecs),
-  compat: many(productVehicleCompat),
+  fitments: many(productFitments),
+  references: many(productReferences),
   inventory: one(inventory, { fields: [products.id], references: [inventory.productId] }),
 }));
 
@@ -681,15 +908,52 @@ export const vehicleBrandRelations = relations(vehicleBrands, ({ many }) => ({ m
 export const vehicleModelRelations = relations(vehicleModels, ({ one, many }) => ({
   brand: one(vehicleBrands, { fields: [vehicleModels.vehicleBrandId], references: [vehicleBrands.id] }),
   engines: many(vehicleEngines),
+  generations: many(vehicleGenerations),
+  trims: many(vehicleTrims),
+  configurations: many(vehicleConfigurations),
 }));
 export const vehicleEngineRelations = relations(vehicleEngines, ({ one }) => ({
   model: one(vehicleModels, { fields: [vehicleEngines.vehicleModelId], references: [vehicleModels.id] }),
 }));
 
-export const compatRelations = relations(productVehicleCompat, ({ one }) => ({
-  product: one(products, { fields: [productVehicleCompat.productId], references: [products.id] }),
-  model: one(vehicleModels, { fields: [productVehicleCompat.vehicleModelId], references: [vehicleModels.id] }),
-  engine: one(vehicleEngines, { fields: [productVehicleCompat.vehicleEngineId], references: [vehicleEngines.id] }),
+export const fitmentRelations = relations(productFitments, ({ one }) => ({
+  product: one(products, { fields: [productFitments.productId], references: [products.id] }),
+  configuration: one(vehicleConfigurations, {
+    fields: [productFitments.vehicleConfigurationId],
+    references: [vehicleConfigurations.id],
+  }),
+}));
+
+export const vehicleConfigurationRelations = relations(vehicleConfigurations, ({ one, many }) => ({
+  model: one(vehicleModels, { fields: [vehicleConfigurations.vehicleModelId], references: [vehicleModels.id] }),
+  generation: one(vehicleGenerations, {
+    fields: [vehicleConfigurations.vehicleGenerationId],
+    references: [vehicleGenerations.id],
+  }),
+  trim: one(vehicleTrims, { fields: [vehicleConfigurations.vehicleTrimId], references: [vehicleTrims.id] }),
+  engine: one(vehicleEngines, { fields: [vehicleConfigurations.vehicleEngineId], references: [vehicleEngines.id] }),
+  fitments: many(productFitments),
+}));
+
+export const productReferenceRelations = relations(productReferences, ({ one }) => ({
+  product: one(products, {
+    fields: [productReferences.productId],
+    references: [products.id],
+    relationName: 'source',
+  }),
+  targetProduct: one(products, {
+    fields: [productReferences.targetProductId],
+    references: [products.id],
+    relationName: 'target',
+  }),
+}));
+
+export const customerVehicleRelations = relations(customerVehicles, ({ one }) => ({
+  user: one(users, { fields: [customerVehicles.userId], references: [users.id] }),
+  configuration: one(vehicleConfigurations, {
+    fields: [customerVehicles.vehicleConfigurationId],
+    references: [vehicleConfigurations.id],
+  }),
 }));
 
 export const orderRelations = relations(orders, ({ one, many }) => ({
@@ -716,6 +980,7 @@ export const cartItemRelations = relations(cartItems, ({ one }) => ({
 
 export const userRelations = relations(users, ({ many }) => ({
   addresses: many(addresses),
+  vehicles: many(customerVehicles),
   orders: many(orders),
   sessions: many(sessions),
 }));

@@ -9,10 +9,14 @@ import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb, withTransaction, type Database } from '@/infrastructure/db/client';
 import {
   brands, categories, inventory, productImages, productSpecs,
-  productVehicleCompat, products, users,
+  productReferences, products, users,
 } from '@/infrastructure/db/schema';
 import { errors } from '@/domain/errors';
 import { ensureInventoryRow } from './inventory-service';
+import {
+  listFitmentsForProduct, setProductFitments, setProductReferences,
+  type FitmentInput, type ReferenceInput,
+} from './fitment-service';
 import { slugify, uniqueSlug } from '@/lib/slug';
 
 /* ── products ─────────────────────────────────────────────────────────── */
@@ -38,13 +42,16 @@ export interface ProductInput {
   countryOfOrigin?: string | null;
   condition?: 'new' | 'refurbished' | 'used';
   installationNotes?: string | null;
+  productFamily?: string | null;
+  allowBackorder?: boolean;
   tags?: string[];
   seoTitle?: string | null;
   seoDescription?: string | null;
   isActive: boolean;
   images?: { url: string; alt?: string | null }[];
   specs?: { specKey: string; specValue: string; unit?: string | null }[];
-  fitments?: { vehicleModelId: string; vehicleEngineId?: string | null; yearFrom?: number | null; yearTo?: number | null }[];
+  fitments?: FitmentInput[];
+  references?: ReferenceInput[];
   /** Only honoured on create; afterwards stock moves through the inventory service. */
   initialStock?: number;
 }
@@ -96,19 +103,11 @@ async function writeChildren(tx: Database, productId: string, input: ProductInpu
   }
 
   if (input.fitments) {
-    await tx.delete(productVehicleCompat).where(eq(productVehicleCompat.productId, productId));
-    for (const fit of input.fitments) {
-      await tx
-        .insert(productVehicleCompat)
-        .values({
-          productId,
-          vehicleModelId: fit.vehicleModelId,
-          vehicleEngineId: fit.vehicleEngineId ?? null,
-          yearFrom: fit.yearFrom ?? null,
-          yearTo: fit.yearTo ?? null,
-        })
-        .onConflictDoNothing();
-    }
+    await setProductFitments(productId, input.fitments, 'manual', tx);
+  }
+
+  if (input.references) {
+    await setProductReferences(productId, input.references, tx);
   }
 }
 
@@ -134,6 +133,8 @@ function toRow(input: ProductInput, slug: string) {
     countryOfOrigin: input.countryOfOrigin?.trim() || null,
     condition: input.condition ?? 'new',
     installationNotes: input.installationNotes?.trim() || null,
+    productFamily: input.productFamily?.trim() || null,
+    allowBackorder: input.allowBackorder ?? false,
     tags: input.tags ?? [],
     seoTitle: input.seoTitle?.trim() || null,
     seoDescription: input.seoDescription?.trim() || null,
@@ -529,11 +530,16 @@ export async function getProductForEdit(productId: string, db: Database = getDb(
     db.select().from(productImages).where(eq(productImages.productId, productId))
       .orderBy(desc(productImages.isPrimary), asc(productImages.sortOrder)),
     db.select().from(productSpecs).where(eq(productSpecs.productId, productId)).orderBy(asc(productSpecs.sortOrder)),
-    db.select().from(productVehicleCompat).where(eq(productVehicleCompat.productId, productId)),
+    listFitmentsForProduct(productId, db),
     db.select().from(inventory).where(eq(inventory.productId, productId)).limit(1),
   ]);
 
-  return { product, images, specs, fitments, stock: stock[0] ?? null };
+  const references = await db
+    .select()
+    .from(productReferences)
+    .where(eq(productReferences.productId, productId));
+
+  return { product, images, specs, fitments, references, stock: stock[0] ?? null };
 }
 
 /** Order counts and revenue by day for the dashboard chart. */

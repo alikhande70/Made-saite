@@ -348,7 +348,7 @@ export function CheckoutForm({
 
         <Button
           type="submit"
-          variant="signal"
+          variant="accent"
           size="lg"
           className="mt-5 w-full"
           disabled={submitting || quoting || options.length === 0}

@@ -27,6 +27,8 @@ interface Props {
   /** True on a category page, where the category is fixed by the URL. */
   lockCategory?: boolean;
   lockBrand?: boolean;
+  /** True on a `/parts/{category}/{vehicle}` landing page, where the vehicle is the URL. */
+  lockVehicle?: boolean;
   total: number;
 }
 
@@ -78,7 +80,7 @@ export function ProductFilters(props: Props) {
 }
 
 function FilterForm({
-  facets, categories, vehicles, state, lockCategory, lockBrand, total, onApplied,
+  facets, categories, vehicles, state, lockCategory, lockBrand, lockVehicle, total, onApplied,
 }: Props & { onApplied?: () => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -115,7 +117,7 @@ function FilterForm({
     state.brands.length +
     (state.minPrice ? 1 : 0) + (state.maxPrice ? 1 : 0) +
     (state.inStock ? 1 : 0) + (state.manufacturer ? 1 : 0) +
-    (state.vehicleModel ? 1 : 0) + (!lockCategory && state.category ? 1 : 0);
+    (!lockVehicle && state.vehicleModel ? 1 : 0) + (!lockCategory && state.category ? 1 : 0);
 
   return (
     <div className="space-y-5">
@@ -136,10 +138,11 @@ function FilterForm({
               const q = searchParams.get('q');
               if (q) params.set('q', q);
               if (lockCategory && state.category) params.set('category', state.category);
+              if (lockVehicle && state.vehicleModel) params.set('vehicleModel', state.vehicleModel);
               router.push(params.toString() ? `?${params.toString()}` : '?');
               onApplied?.();
             }}
-            className="text-xs font-semibold text-signal-700 hover:underline"
+            className="text-xs font-semibold text-accent-700 hover:underline"
           >
             حذف همهٔ فیلترها
           </button>
@@ -161,7 +164,8 @@ function FilterForm({
         </label>
       </FilterGroup>
 
-      {/* Vehicle */}
+      {/* Vehicle — hidden when the URL itself is the vehicle. */}
+      {!lockVehicle && (
       <FilterGroup title="خودرو">
         {selectedVehicle ? (
           <div className="flex items-center justify-between gap-2 rounded-lg bg-steel-50 px-3 py-2">
@@ -197,6 +201,7 @@ function FilterForm({
           </select>
         )}
       </FilterGroup>
+      )}
 
       {/* Category */}
       {!lockCategory && categories.length > 0 && (

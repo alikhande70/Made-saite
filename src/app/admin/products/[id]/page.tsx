@@ -26,7 +26,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     listCategoriesAdmin(), listBrandsAdmin(), getVehicleTree(), listInventoryEvents(getDb(), id, 20),
   ]);
 
-  const { product, images, specs, fitments, stock } = data;
+  const { product, images, specs, fitments, references, stock } = data;
   const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v));
 
   return (
@@ -77,6 +77,8 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           condition: product.condition,
           installationNotes: product.installationNotes ?? '',
           tags: product.tags.join('، '),
+          productFamily: product.productFamily ?? '',
+          allowBackorder: product.allowBackorder,
           seoTitle: product.seoTitle ?? '',
           seoDescription: product.seoDescription ?? '',
           isActive: product.isActive,
@@ -84,10 +86,19 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         initialImages={images.map((i) => ({ url: i.url, alt: i.alt ?? '' }))}
         initialSpecs={specs.map((s) => ({ specKey: s.specKey, specValue: s.specValue, unit: s.unit ?? '' }))}
         initialFitments={fitments.map((f) => ({
-          vehicleModelId: f.vehicleModelId,
-          vehicleEngineId: f.vehicleEngineId ?? '',
-          yearFrom: str(f.yearFrom),
-          yearTo: str(f.yearTo),
+          vehicleModelId: f.configuration.modelId,
+          vehicleTrimId: f.configuration.trimId ?? '',
+          vehicleEngineId: f.configuration.engineId ?? '',
+          yearFrom: str(f.configuration.yearFrom),
+          yearTo: str(f.configuration.yearTo),
+          fitmentType: f.fitmentType,
+          note: f.note ?? '',
+        }))}
+        initialReferences={references.map((r) => ({
+          relationType: r.relationType,
+          targetNumber: r.targetNumber ?? '',
+          targetBrand: r.targetBrand ?? '',
+          note: r.note ?? '',
         }))}
       />
 

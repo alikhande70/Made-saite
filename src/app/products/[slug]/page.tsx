@@ -2,17 +2,24 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import {
-  getProductBySlug, getRelatedProducts, getSimilarByVehicle,
+  getProductBySlug, getRelatedProducts, getSimilarByVehicle, getVehicleTree,
 } from '@/application/catalog-service';
+import {
+  evaluateProductForConfiguration, getConfiguration, listProductReferences,
+} from '@/application/fitment-service';
+import { getSelectedVehicleId } from '@/lib/session';
 import { getShippingOptions } from '@/application/shipping-service';
 import { siteUrl, getStoreProfile } from '@/application/settings-service';
 import { JsonLd } from '@/components/json-ld';
 import { ProductGallery } from '@/components/product-gallery';
 import { QuantityAndAdd } from '@/components/quantity-add';
 import { ProductRail } from '@/components/product-card';
+import { CompatibilityPanel, VerdictChip } from '@/components/compatibility';
+import { VehicleSelector } from '@/components/vehicle-selector';
 import {
   Breadcrumbs, LatinId, Price, SectionHeading, StockBadge, ShieldIcon, TruckIcon, WrenchIcon, BoxIcon,
 } from '@/components/ui';
+import { FITMENT_TYPE_LABEL_FA, REFERENCE_TYPE_LABEL_FA } from '@/domain/fitment';
 import { formatDeliveryWindow, formatToman, formatYearRange, toPersianDigits } from '@/lib/fa';
 
 export const dynamic = 'force-dynamic';
@@ -53,12 +60,27 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const product = await getProductBySlug(decodeURIComponent(slug));
   if (!product) notFound();
 
-  const [related, similar, shipping, store] = await Promise.all([
+  const selectedVehicleId = await getSelectedVehicleId();
+
+  const [related, similar, shipping, store, references, vehicle] = await Promise.all([
     getRelatedProducts(product.id, product.category?.id ?? null, 8),
     getSimilarByVehicle(product.id, 8),
     getShippingOptions('تهران', product.effectivePrice, product.weightGrams ?? 500),
     getStoreProfile(),
+    listProductReferences(product.id),
+    // A stale cookie (configuration deleted since) must not break the page.
+    selectedVehicleId ? getConfiguration(selectedVehicleId).catch(() => null) : null,
   ]);
+
+  /*
+   * The verdict is computed here, on the server, from fitment rows — the page
+   * never ships a rule the client could disagree with.
+   */
+  const compatibility = vehicle
+    ? await evaluateProductForConfiguration(product.id, vehicle.id).catch(() => null)
+    : null;
+
+  const vehicleTree = vehicle ? [] : await getVehicleTree();
 
   const outOfStock = product.stockStatus === 'OUT_OF_STOCK';
 
@@ -179,7 +201,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           <div className="my-5 rounded-xl border border-line bg-white p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <Price price={product.price} salePrice={product.salePrice} size="lg" />
-              <StockBadge status={product.stockStatus} quantity={product.quantityAvailable} />
+              <div className="flex flex-wrap items-center gap-2">
+                {compatibility && <VerdictChip verdict={compatibility.verdict} />}
+                <StockBadge status={product.stockStatus} quantity={product.quantityAvailable} />
+              </div>
             </div>
 
             <div className="mt-4">
@@ -221,6 +246,12 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 );
               })()}
             </ul>
+          </div>
+
+          <div className="mb-5">
+            <CompatibilityPanel result={compatibility} vehicle={vehicle}>
+              <VehicleSelector vehicles={vehicleTree} compact submitLabel="بررسی سازگاری" />
+            </CompatibilityPanel>
           </div>
 
           {product.descriptionFa && (
@@ -286,11 +317,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         </section>
       )}
 
-      {/* Vehicle compatibility */}
+      {/* Recorded fitment — the same rows the verdict above is computed from. */}
       <section className="mt-10">
         <SectionHeading
           title="خودروهای سازگار"
-          subtitle="این قطعه روی خودروهای زیر قابل نصب است"
+          subtitle="جدول زیر همان داده‌ای است که نتیجهٔ سازگاری از روی آن محاسبه می‌شود."
         />
         {product.compatibility.length === 0 ? (
           <div className="card p-5 text-sm text-muted">
@@ -304,13 +335,18 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 <tr>
                   <th scope="col" className="font-bold text-steel-800">برند</th>
                   <th scope="col" className="font-bold text-steel-800">مدل</th>
-                  <th scope="col" className="font-bold text-steel-800">موتور / تیپ</th>
+                  <th scope="col" className="font-bold text-steel-800">نسل / تیپ</th>
+                  <th scope="col" className="font-bold text-steel-800">موتور</th>
                   <th scope="col" className="font-bold text-steel-800">سال ساخت</th>
+                  <th scope="col" className="font-bold text-steel-800">وضعیت</th>
                 </tr>
               </thead>
               <tbody>
                 {product.compatibility.map((fit, i) => (
-                  <tr key={`${fit.modelSlug}-${fit.engineCode ?? 'all'}-${i}`}>
+                  <tr
+                    key={`${fit.modelSlug}-${fit.trimName ?? ''}-${fit.engineCode ?? 'all'}-${i}`}
+                    className={fit.fitmentType === 'NOT_COMPATIBLE' ? 'bg-red-50/60' : undefined}
+                  >
                     <td className="whitespace-nowrap font-semibold">{fit.vehicleBrandName}</td>
                     <td className="whitespace-nowrap">
                       <Link
@@ -321,16 +357,33 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                       </Link>
                     </td>
                     <td className="whitespace-nowrap font-normal text-muted">
+                      {[fit.generationName, fit.trimName].filter(Boolean).join(' · ') || 'همهٔ تیپ‌ها'}
+                    </td>
+                    <td className="whitespace-nowrap font-normal text-muted">
                       {fit.engineCode ? (
                         <>
                           <LatinId className="font-semibold text-steel-800">{fit.engineCode}</LatinId>
                           {fit.engineName && <span className="ms-1.5 text-xs">{fit.engineName}</span>}
                         </>
                       ) : (
-                        'همهٔ تیپ‌ها'
+                        'همهٔ موتورها'
                       )}
                     </td>
                     <td className="whitespace-nowrap font-normal">{formatYearRange(fit.yearFrom, fit.yearTo)}</td>
+                    <td className="font-normal">
+                      <span
+                        className={`verdict ${
+                          fit.fitmentType === 'DIRECT'
+                            ? 'verdict-yes'
+                            : fit.fitmentType === 'WITH_MODIFICATION'
+                              ? 'verdict-maybe'
+                              : 'verdict-no'
+                        }`}
+                      >
+                        {FITMENT_TYPE_LABEL_FA[fit.fitmentType]}
+                      </span>
+                      {fit.note && <span className="mt-1 block text-xs text-muted">{fit.note}</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -338,6 +391,55 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
         )}
       </section>
+
+      {/* Part-number relationships: supersessions, alternates, cross-references. */}
+      {references.length > 0 && (
+        <section className="mt-10">
+          <SectionHeading
+            title="کدهای مرتبط و قطعات جایگزین"
+            subtitle="شماره‌فنی‌های معادل و قطعاتی که جایگزین این کد می‌شوند"
+          />
+          <div className="card scroll-x">
+            <table className="spec-table">
+              <caption className="sr-only">کدهای مرتبط با {product.titleFa}</caption>
+              <thead className="bg-steel-50 text-xs">
+                <tr>
+                  <th scope="col" className="font-bold text-steel-800">نوع ارتباط</th>
+                  <th scope="col" className="font-bold text-steel-800">کد / قطعه</th>
+                  <th scope="col" className="font-bold text-steel-800">سازنده</th>
+                  <th scope="col" className="font-bold text-steel-800">توضیح</th>
+                </tr>
+              </thead>
+              <tbody>
+                {references.map((ref) => (
+                  <tr key={ref.id}>
+                    <td className="whitespace-nowrap font-semibold">{REFERENCE_TYPE_LABEL_FA[ref.relationType]}</td>
+                    <td>
+                      {/* Only link to a part we actually sell and still publish. */}
+                      {ref.target && ref.target.isActive ? (
+                        <Link
+                          href={`/products/${encodeURIComponent(ref.target.slug)}`}
+                          className="font-semibold text-accent-700 hover:underline"
+                        >
+                          {ref.target.titleFa}
+                          <LatinId className="ms-1.5 text-xs text-muted">{ref.target.sku}</LatinId>
+                        </Link>
+                      ) : (
+                        <LatinId className="font-semibold">{ref.targetNumber ?? ref.target?.sku ?? '—'}</LatinId>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap font-normal text-muted">{ref.targetBrand ?? '—'}</td>
+                    <td className="font-normal text-muted">{ref.note ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint mt-2">
+            کدهای معادل صرفاً برای تطبیق شماره‌فنی است و جایگزین بررسی سازگاری با خودروی شما نمی‌شود.
+          </p>
+        </section>
+      )}
 
       {/* Shipping */}
       <section className="mt-10">

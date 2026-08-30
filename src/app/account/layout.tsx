@@ -2,13 +2,14 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/session';
 import { LogoutButton } from '@/components/logout-button';
-import { BoxIcon, TruckIcon, UserIcon } from '@/components/ui';
+import { BoxIcon, CarIcon, TruckIcon, UserIcon } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
 const LINKS = [
   { href: '/account', label: 'خلاصهٔ حساب', icon: UserIcon },
   { href: '/account/orders', label: 'سفارش‌های من', icon: BoxIcon },
+  { href: '/account/garage', label: 'گاراژ من', icon: CarIcon },
   { href: '/account/addresses', label: 'آدرس‌ها', icon: TruckIcon },
   { href: '/account/profile', label: 'اطلاعات حساب', icon: UserIcon },
 ];

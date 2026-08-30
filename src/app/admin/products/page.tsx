@@ -41,7 +41,7 @@ export default async function AdminProductsPage({
       <SectionHeading
         title="مدیریت کالاها" as="h1"
         subtitle={`${toPersianDigits(result.total)} کالا`}
-        action={<LinkButton href="/admin/products/new" variant="signal" size="sm">افزودن کالای جدید</LinkButton>}
+        action={<LinkButton href="/admin/products/new" variant="accent" size="sm">افزودن کالای جدید</LinkButton>}
       />
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-2">
@@ -77,7 +77,7 @@ export default async function AdminProductsPage({
       {result.items.length === 0 ? (
         <EmptyState
           title="کالایی یافت نشد"
-          action={<LinkButton href="/admin/products/new" variant="signal">افزودن کالای جدید</LinkButton>}
+          action={<LinkButton href="/admin/products/new" variant="accent">افزودن کالای جدید</LinkButton>}
         />
       ) : (
         <>

@@ -9,7 +9,7 @@ export default function NotFound() {
         ممکن است نشانی تغییر کرده باشد یا کالای موردنظر از فروشگاه حذف شده باشد.
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <LinkButton href="/" variant="signal">بازگشت به صفحهٔ اصلی</LinkButton>
+        <LinkButton href="/" variant="accent">بازگشت به صفحهٔ اصلی</LinkButton>
         <LinkButton href="/categories" variant="secondary">مرور دسته‌بندی‌ها</LinkButton>
       </div>
     </div>

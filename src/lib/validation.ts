@@ -172,6 +172,7 @@ export const productQuerySchema = z.object({
   category: z.string().trim().max(140).optional(),
   brand: z.union([z.string(), z.array(z.string())]).optional(),
   vehicleModel: z.string().trim().max(140).optional(),
+  vehicleTrim: z.string().trim().max(140).optional(),
   vehicleEngine: z.string().trim().max(140).optional(),
   vehicleYear: z.coerce.number().int().min(1300).max(1450).optional(),
   minPrice: z.coerce.number().int().min(0).optional(),

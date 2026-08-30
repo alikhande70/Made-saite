@@ -17,7 +17,7 @@ export function AddToCartButton({
   quantity = 1,
   size = 'md',
   label = 'افزودن به سبد خرید',
-  variant = 'signal',
+  variant = 'accent',
 }: {
   productId: string;
   disabled?: boolean;
@@ -25,7 +25,7 @@ export function AddToCartButton({
   quantity?: number;
   size?: 'sm' | 'md' | 'lg';
   label?: string;
-  variant?: 'signal' | 'primary';
+  variant?: 'accent' | 'primary';
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();

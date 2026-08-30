@@ -29,7 +29,7 @@ export default async function AdminDashboard() {
         <h1 className="mb-4 text-xl font-extrabold text-steel-900 sm:text-2xl">داشبورد فروشگاه</h1>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Stat label="سفارش‌های در انتظار پرداخت" value={toPersianDigits(summary.pendingCount)} tone="amber" />
-          <Stat label="سفارش‌های نیازمند اقدام" value={toPersianDigits(summary.actionableCount)} tone="signal" />
+          <Stat label="سفارش‌های نیازمند اقدام" value={toPersianDigits(summary.actionableCount)} tone="accent" />
           <Stat label="فروش ۳۰ روز اخیر" value={formatTomanCompact(summary.revenueLast30Days)} tone="emerald" />
           <Stat label="مشتریان ثبت‌نام‌شده" value={toPersianDigits(summary.customerCount)} />
         </div>
@@ -161,9 +161,9 @@ export default async function AdminDashboard() {
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'amber' | 'signal' | 'emerald' }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'amber' | 'accent' | 'emerald' }) {
   const accent = {
-    amber: 'text-amber-700', signal: 'text-signal-700', emerald: 'text-emerald-700',
+    amber: 'text-amber-700', accent: 'text-accent-700', emerald: 'text-emerald-700',
   }[tone ?? 'amber'];
   return (
     <div className="card p-4">

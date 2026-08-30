@@ -13,10 +13,12 @@ import './env';
 import { sql } from 'drizzle-orm';
 import { getDb, closePool, withTransaction } from '../src/infrastructure/db/client';
 import {
-  brands, categories, inventory, inventoryEvents, productImages, productSpecs,
-  productVehicleCompat, products, shippingMethods, shippingRates, storeSettings,
-  users, vehicleBrands, vehicleEngines, vehicleModels,
+  brands, categories, inventory, inventoryEvents, productFitments, productImages,
+  productReferences, productSpecs, products, shippingMethods, shippingRates,
+  storeSettings, users, vehicleBrands, vehicleEngines, vehicleGenerations,
+  vehicleModels, vehicleTrims,
 } from '../src/infrastructure/db/schema';
+import { getOrCreateConfiguration } from '../src/application/fitment-service';
 import { hashPassword } from '../src/lib/crypto';
 
 const DEMO_BANNER = 'داده نمایشی — این محصول صرفاً برای نمایش و آزمایش سامانه ثبت شده است.';
@@ -118,12 +120,23 @@ const VEHICLES: {
   models: {
     slug: string; nameFa: string; nameEn: string; yearFrom: number; yearTo: number;
     engines: { code: string; nameFa: string; cc: number; fuel: string }[];
+    generations?: { code: string; nameFa: string; yearFrom: number; yearTo: number }[];
+    trims?: { code: string; nameFa: string }[];
   }[];
 }[] = [
   {
     slug: 'irankhodro', nameFa: 'ایران خودرو', nameEn: 'IKCO', sort: 1,
     models: [
       { slug: 'peugeot-206', nameFa: 'پژو ۲۰۶', nameEn: 'Peugeot 206', yearFrom: 1380, yearTo: 1402,
+        generations: [
+          { code: 'HB', nameFa: 'هاچ‌بک', yearFrom: 1380, yearTo: 1402 },
+          { code: 'SD', nameFa: 'صندوق‌دار (۲۰۶ SD)', yearFrom: 1385, yearTo: 1402 },
+        ],
+        trims: [
+          { code: 'TIP2', nameFa: 'تیپ ۲' },
+          { code: 'TIP3', nameFa: 'تیپ ۳' },
+          { code: 'TIP5', nameFa: 'تیپ ۵' },
+        ],
         engines: [
           { code: 'TU3', nameFa: 'موتور TU3 (۱۴۰۰ سی‌سی)', cc: 1360, fuel: 'بنزینی' },
           { code: 'TU5', nameFa: 'موتور TU5 (۱۶۰۰ سی‌سی)', cc: 1587, fuel: 'بنزینی' },
@@ -136,6 +149,10 @@ const VEHICLES: {
       { slug: 'peugeot-405', nameFa: 'پژو ۴۰۵', nameEn: 'Peugeot 405', yearFrom: 1372, yearTo: 1399,
         engines: [{ code: 'XU7', nameFa: 'موتور XU7 (۱۸۰۰ سی‌سی)', cc: 1761, fuel: 'بنزینی' }] },
       { slug: 'samand', nameFa: 'سمند', nameEn: 'Samand', yearFrom: 1381, yearTo: 1402,
+        trims: [
+          { code: 'LX', nameFa: 'سمند LX' },
+          { code: 'SOREN', nameFa: 'سورن' },
+        ],
         engines: [
           { code: 'EF7', nameFa: 'موتور ملی EF7', cc: 1650, fuel: 'بنزینی' },
           { code: 'XU7', nameFa: 'موتور XU7 (۱۸۰۰ سی‌سی)', cc: 1761, fuel: 'بنزینی' },
@@ -155,6 +172,10 @@ const VEHICLES: {
     slug: 'saipa', nameFa: 'سایپا', nameEn: 'SAIPA', sort: 2,
     models: [
       { slug: 'pride-131', nameFa: 'پراید ۱۳۱', nameEn: 'Pride 131', yearFrom: 1387, yearTo: 1399,
+        trims: [
+          { code: 'SE', nameFa: 'پراید ۱۳۱ SE' },
+          { code: 'SX', nameFa: 'پراید ۱۳۱ SX' },
+        ],
         engines: [{ code: 'SL', nameFa: 'موتور SL (۱۳۰۰ سی‌سی)', cc: 1323, fuel: 'بنزینی' }] },
       { slug: 'tiba', nameFa: 'تیبا', nameEn: 'Tiba', yearFrom: 1388, yearTo: 1402,
         engines: [{ code: 'M13', nameFa: 'موتور M13', cc: 1329, fuel: 'بنزینی' }] },
@@ -179,7 +200,20 @@ const VEHICLES: {
 
 /* ── products ───────────────────────────────────────────────────────── */
 
-type Fitment = { model: string; engine?: string; yearFrom?: number; yearTo?: number };
+type Fitment = {
+  model: string;
+  engine?: string;
+  trim?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  type?: 'DIRECT' | 'WITH_MODIFICATION' | 'NOT_COMPATIBLE';
+  note?: string;
+};
+type Reference = {
+  type: 'SUPERSEDES' | 'SUPERSEDED_BY' | 'ALTERNATE' | 'CROSS_REFERENCE';
+  number: string;
+  brand?: string;
+};
 type SeedProduct = {
   sku: string; oem: string | null; mpn: string | null; title: string; titleEn: string;
   category: string; brand: string; manufacturer: string; price: number; salePrice?: number;
@@ -188,6 +222,8 @@ type SeedProduct = {
   description: string; installation?: string;
   specs: [string, string, string?][];
   fitments: Fitment[]; tags: string[];
+  family?: string;
+  references?: Reference[];
 };
 
 const PRODUCTS: SeedProduct[] = [
@@ -199,7 +235,18 @@ const PRODUCTS: SeedProduct[] = [
     description: 'فیلتر روغن اسپین‌آن با المنت کاغذی پرس‌شده و شیر یک‌طرفه سیلیکونی. مناسب موتورهای TU5 و TU3 با فاصلهٔ تعویض ۱۰٬۰۰۰ کیلومتر.',
     installation: 'پیش از بستن، واشر لاستیکی را با روغن تازه چرب کنید و فیلتر را تنها به اندازهٔ سه‌چهارم دور پس از تماس واشر سفت کنید.',
     specs: [['نوع فیلتر', 'اسپین‌آن'], ['قطر بیرونی', '۷۶', 'میلی‌متر'], ['ارتفاع', '۹۳', 'میلی‌متر'], ['رزوه', 'M20×1.5'], ['شیر یک‌طرفه', 'دارد'], ['فشار بازشدن شیر اطمینان', '۱٫۲', 'بار']],
-    fitments: [{ model: 'peugeot-206', engine: 'TU5' }, { model: 'peugeot-206', engine: 'TU3' }, { model: 'peugeot-pars', engine: 'TU5' }, { model: 'rana' }],
+    family: 'oil-filter-tu-series',
+    fitments: [
+      { model: 'peugeot-206', engine: 'TU5' },
+      { model: 'peugeot-206', engine: 'TU3' },
+      { model: 'peugeot-pars', engine: 'TU5' },
+      { model: 'rana' },
+    ],
+    references: [
+      { type: 'CROSS_REFERENCE', number: 'OC90', brand: 'Knecht/Mahle' },
+      { type: 'CROSS_REFERENCE', number: 'PH5796', brand: 'Fram' },
+      { type: 'SUPERSEDES', number: '1109N3', brand: 'Peugeot' },
+    ],
     tags: ['فیلتر روغن', 'پژو', '206', 'TU5', 'oil filter'],
   },
   {
@@ -240,7 +287,17 @@ const PRODUCTS: SeedProduct[] = [
     description: 'ست کامل چهار عددی لنت ترمز جلو با ترکیب نیمه‌متالیک کم‌غبار. صدای ترمز پایین و پایداری اصطکاک در دمای بالا.',
     installation: 'پس از تعویض، پدال ترمز را چند بار پمپ کنید و ۲۰۰ کیلومتر اول را با ترمزگیری ملایم آب‌بندی کنید.',
     specs: [['تعداد در بسته', '۴', 'عدد'], ['طول', '۱۱۹', 'میلی‌متر'], ['عرض', '۵۲', 'میلی‌متر'], ['ضخامت', '۱۷', 'میلی‌متر'], ['ترکیب اصطکاکی', 'نیمه‌متالیک'], ['سنسور سایش', 'ندارد']],
-    fitments: [{ model: 'peugeot-206', yearFrom: 1382, yearTo: 1402 }, { model: 'rana' }],
+    family: 'brake-pad-front-206',
+    fitments: [
+      { model: 'peugeot-206', yearFrom: 1382, yearTo: 1402 },
+      { model: 'peugeot-206', trim: 'TIP5', engine: 'TU5' },
+      { model: 'rana' },
+    ],
+    references: [
+      { type: 'SUPERSEDES', number: '425461', brand: 'Peugeot' },
+      { type: 'CROSS_REFERENCE', number: 'GDB1330', brand: 'TRW' },
+      { type: 'CROSS_REFERENCE', number: '13.0460-2733.2', brand: 'ATE' },
+    ],
     tags: ['لنت ترمز', 'پژو', '206', 'brake pad', 'جلو'],
   },
   {
@@ -260,7 +317,19 @@ const PRODUCTS: SeedProduct[] = [
     images: ['/demo/brake-disc.svg'], weight: 9_800, warranty: 12, country: 'آلمان',
     description: 'جفت دیسک ترمز جلو خنک‌شونده با پوشش ضدزنگ. تلرانس بالانس دقیق برای حذف لرزش فرمان هنگام ترمزگیری.',
     specs: [['قطر', '۲۸۳', 'میلی‌متر'], ['ضخامت', '۲۶', 'میلی‌متر'], ['حداقل ضخامت مجاز', '۲۴', 'میلی‌متر'], ['تعداد پیچ', '۴'], ['نوع', 'خنک‌شونده (ونتیله)'], ['تعداد در بسته', '۲', 'عدد']],
-    fitments: [{ model: 'peugeot-206', engine: 'TU5' }, { model: 'peugeot-pars', engine: 'TU5' }],
+    family: 'brake-disc-front-206',
+    fitments: [
+      { model: 'peugeot-206', engine: 'TU5', trim: 'TIP5' },
+      { model: 'peugeot-206', engine: 'TU5' },
+      { model: 'peugeot-pars', engine: 'TU5' },
+      // Real-world exclusion: TU3 cars use a smaller 247mm disc.
+      { model: 'peugeot-206', engine: 'TU3', type: 'NOT_COMPATIBLE',
+        note: 'موتور TU3 از دیسک ۲۴۷ میلی‌متری استفاده می‌کند' },
+    ],
+    references: [
+      { type: 'CROSS_REFERENCE', number: '4246W8', brand: 'Peugeot' },
+      { type: 'ALTERNATE', number: 'DF4249' },
+    ],
     tags: ['دیسک ترمز', 'پژو', '206', 'brake disc'],
   },
   {
@@ -270,7 +339,17 @@ const PRODUCTS: SeedProduct[] = [
     images: ['/demo/spark-plug.svg'], weight: 260, warranty: 12, country: 'آلمان',
     description: 'شمع نیکل-ییتریوم با الکترود مرکزی مسی. دورهٔ تعویض ۲۰٬۰۰۰ کیلومتر روی موتور ملی EF7.',
     specs: [['کد حرارتی', '۷'], ['رزوه', 'M14×1.25'], ['فاصلهٔ دهانه', '۰٫۹', 'میلی‌متر'], ['گشتاور بستن', '۲۵', 'نیوتن‌متر'], ['تعداد در بسته', '۴', 'عدد']],
-    fitments: [{ model: 'dena', engine: 'EF7' }, { model: 'samand', engine: 'EF7' }, { model: 'rana', engine: 'EF7' }],
+    family: 'spark-plug-ef7',
+    fitments: [
+      { model: 'dena', engine: 'EF7' },
+      { model: 'samand', engine: 'EF7', trim: 'SOREN' },
+      { model: 'samand', engine: 'EF7', trim: 'LX' },
+      { model: 'rana', engine: 'EF7' },
+    ],
+    references: [
+      { type: 'CROSS_REFERENCE', number: 'FR7DC+', brand: 'Bosch' },
+      { type: 'ALTERNATE', number: 'BKR6E-11', brand: 'NGK' },
+    ],
     tags: ['شمع', 'EF7', 'موتور ملی', 'spark plug', 'دنا', 'سمند'],
   },
   {
@@ -517,6 +596,139 @@ const PRODUCTS: SeedProduct[] = [
     fitments: [{ model: 'pride-131' }, { model: 'tiba' }],
     tags: ['دیسک ترمز', 'پراید', 'brake disc'],
   },
+  /*
+   * The block below deepens coverage for the two highest-volume Iranian
+   * platforms so that a few (category × vehicle) pairings genuinely clear the
+   * landing-page indexability threshold. Real catalogues carry several brands
+   * per fitment; a demo with one part per pairing would make the curated-page
+   * logic untestable.
+   */
+  {
+    sku: 'BRK-PAD-206F-ECO', oem: '425235', mpn: 'BP-206-F-E', title: 'لنت ترمز جلو پژو ۲۰۶ (سری اقتصادی)',
+    titleEn: 'Front Brake Pad Set Peugeot 206 Economy', category: 'brake-pads', brand: 'saipa-yadak',
+    manufacturer: 'سایپا یدک', price: 890_000, stock: 26,
+    images: ['/demo/brake-pad.svg'], weight: 1_180, warranty: 6, country: 'ایران',
+    description: 'ست چهار عددی لنت ترمز جلو با ترکیب آلی بدون آزبست. گزینهٔ اقتصادی برای رانندگی شهری با ترمزگیری متعارف.',
+    installation: 'صفحات ضدصدا را در جای خود قرار دهید و پیچ کالیپر را با گشتاور ۳۰ نیوتون‌متر ببندید.',
+    specs: [['تعداد در بسته', '۴', 'عدد'], ['طول', '۱۱۹', 'میلی‌متر'], ['عرض', '۵۲', 'میلی‌متر'], ['ضخامت', '۱۷', 'میلی‌متر'], ['ترکیب اصطکاکی', 'آلی بدون آزبست'], ['سنسور سایش', 'ندارد']],
+    family: 'brake-pad-front-206',
+    fitments: [
+      { model: 'peugeot-206', yearFrom: 1382, yearTo: 1402 },
+      { model: 'rana' },
+    ],
+    references: [
+      { type: 'ALTERNATE', number: '425467', brand: 'Peugeot' },
+      { type: 'CROSS_REFERENCE', number: 'GDB1330', brand: 'TRW' },
+    ],
+    tags: ['لنت ترمز', 'پژو', '206', 'brake pad', 'اقتصادی'],
+  },
+  {
+    sku: 'BRK-PAD-206R', oem: '425470', mpn: 'BP-206-R', title: 'لنت ترمز عقب پژو ۲۰۶ و رانا',
+    titleEn: 'Rear Brake Pad Set Peugeot 206 / Runna', category: 'brake-pads', brand: 'valeo',
+    manufacturer: 'Valeo', price: 1_180_000, stock: 14,
+    images: ['/demo/brake-pad.svg'], weight: 980, warranty: 12, country: 'فرانسه',
+    description: 'ست لنت ترمز عقب برای خودروهای مجهز به ترمز دیسکی عقب. ترکیب کم‌غبار با پایداری اصطکاک در ترمزگیری پی‌درپی.',
+    specs: [['تعداد در بسته', '۴', 'عدد'], ['طول', '۸۷', 'میلی‌متر'], ['عرض', '۵۳', 'میلی‌متر'], ['ضخامت', '۱۵', 'میلی‌متر'], ['ترکیب اصطکاکی', 'نیمه‌متالیک']],
+    family: 'brake-pad-rear-206',
+    fitments: [
+      { model: 'peugeot-206', trim: 'TIP5' },
+      { model: 'rana' },
+    ],
+    references: [{ type: 'CROSS_REFERENCE', number: 'GDB1621', brand: 'TRW' }],
+    tags: ['لنت ترمز', 'عقب', 'پژو', '206', 'رانا'],
+  },
+  {
+    sku: 'FLT-AIR-206TU5', oem: '1444QT', mpn: 'C 25 114', title: 'فیلتر هوا پژو ۲۰۶ و رانا (موتور TU5)',
+    titleEn: 'Air Filter Peugeot 206 / Runna TU5', category: 'air-filters', brand: 'mann-filter',
+    manufacturer: 'MANN+HUMMEL', price: 395_000, stock: 40,
+    images: ['/demo/air-filter.svg'], weight: 380, warranty: 6, country: 'آلمان',
+    description: 'فیلتر هوای پانلی با کاغذ صافی رزین‌اندود و قاب پلی‌اورتان یکپارچه. آب‌بندی کامل در محفظهٔ فیلتر و افت فشار پایین.',
+    specs: [['نوع فیلتر', 'پانلی'], ['طول', '۲۵۲', 'میلی‌متر'], ['عرض', '۱۸۶', 'میلی‌متر'], ['ارتفاع', '۵۲', 'میلی‌متر'], ['جنس قاب', 'پلی‌اورتان']],
+    family: 'air-filter-tu-series',
+    fitments: [
+      { model: 'peugeot-206', engine: 'TU5' },
+      { model: 'peugeot-206', engine: 'TU3' },
+      { model: 'rana' },
+    ],
+    references: [{ type: 'CROSS_REFERENCE', number: 'LX 1566', brand: 'Knecht/Mahle' }],
+    tags: ['فیلتر هوا', 'پژو', '206', 'رانا', 'air filter'],
+  },
+  {
+    sku: 'FLT-OIL-206-ISACO', oem: '1109AH', mpn: 'OF-206-IS', title: 'فیلتر روغن پژو ۲۰۶ (تولید داخل)',
+    titleEn: 'Oil Filter Peugeot 206 Domestic', category: 'oil-filters', brand: 'isaco',
+    manufacturer: 'ایساکو', price: 178_000, stock: 60,
+    images: ['/demo/oil-filter.svg'], weight: 250, warranty: 3, country: 'ایران',
+    description: 'فیلتر روغن اسپین‌آن تولید داخل با المنت کاغذی و شیر یک‌طرفه لاستیکی. گزینهٔ اقتصادی برای سرویس دوره‌ای.',
+    specs: [['نوع فیلتر', 'اسپین‌آن'], ['قطر بیرونی', '۷۶', 'میلی‌متر'], ['ارتفاع', '۹۰', 'میلی‌متر'], ['رزوه', 'M20×1.5'], ['شیر یک‌طرفه', 'دارد']],
+    family: 'oil-filter-tu-series',
+    fitments: [
+      { model: 'peugeot-206' },
+      { model: 'peugeot-pars', engine: 'TU5' },
+      { model: 'rana' },
+    ],
+    references: [{ type: 'ALTERNATE', number: '1109AY', brand: 'Peugeot' }],
+    tags: ['فیلتر روغن', 'پژو', '206', 'ایساکو'],
+  },
+  {
+    sku: 'FLT-CAB-206', oem: '6447KL', mpn: 'CU 2882', title: 'فیلتر کابین پژو ۲۰۶ و پارس',
+    titleEn: 'Cabin Filter Peugeot 206 / Pars', category: 'cabin-filters', brand: 'bosch',
+    manufacturer: 'Bosch', price: 430_000, stock: 30,
+    images: ['/demo/cabin-filter.svg'], weight: 290, warranty: 6, country: 'آلمان',
+    description: 'فیلتر کابین ذره‌ای برای حذف گرد و غبار و گرده از هوای ورودی به کابین. تعویض دوره‌ای بوی نامطبوع سیستم تهویه را کاهش می‌دهد.',
+    specs: [['نوع فیلتر', 'ذره‌ای'], ['طول', '۲۸۰', 'میلی‌متر'], ['عرض', '۲۰۶', 'میلی‌متر'], ['ارتفاع', '۲۰', 'میلی‌متر'], ['دورهٔ تعویض', '۱۵٬۰۰۰', 'کیلومتر']],
+    fitments: [
+      { model: 'peugeot-206' },
+      { model: 'peugeot-pars' },
+      { model: 'rana' },
+    ],
+    tags: ['فیلتر کابین', 'پژو', '206', 'پارس'],
+  },
+  {
+    sku: 'BRK-PAD-TIBA-F', oem: '58101-4A000', mpn: 'BP-TIBA-F', title: 'لنت ترمز جلو تیبا و ساینا',
+    titleEn: 'Front Brake Pad Set Tiba / Saina', category: 'brake-pads', brand: 'saipa-yadak',
+    manufacturer: 'سایپا یدک', price: 820_000, stock: 24,
+    images: ['/demo/brake-pad.svg'], weight: 1_050, warranty: 6, country: 'ایران',
+    description: 'ست چهار عددی لنت ترمز جلو با ترکیب آلی. مناسب کالیپر تک‌پیستونهٔ خانوادهٔ تیبا.',
+    specs: [['تعداد در بسته', '۴', 'عدد'], ['طول', '۱۰۵', 'میلی‌متر'], ['عرض', '۴۹', 'میلی‌متر'], ['ضخامت', '۱۶', 'میلی‌متر'], ['ترکیب اصطکاکی', 'آلی بدون آزبست']],
+    family: 'brake-pad-front-pride',
+    fitments: [
+      { model: 'tiba' },
+      { model: 'saina' },
+      { model: 'quick' },
+    ],
+    references: [{ type: 'ALTERNATE', number: 'PB-131-F', brand: 'SAIPA' }],
+    tags: ['لنت ترمز', 'تیبا', 'ساینا', 'کوییک'],
+  },
+  {
+    sku: 'FLT-AIR-PRIDE', oem: '28113-4A000', mpn: 'C 20 114', title: 'فیلتر هوا پراید، تیبا و ساینا',
+    titleEn: 'Air Filter Pride / Tiba / Saina', category: 'air-filters', brand: 'mann-filter',
+    manufacturer: 'MANN+HUMMEL', price: 285_000, stock: 52,
+    images: ['/demo/air-filter.svg'], weight: 300, warranty: 6, country: 'آلمان',
+    description: 'فیلتر هوای پانلی با کاغذ صافی چندلایه. مناسب موتورهای خانوادهٔ پراید با فاصلهٔ تعویض ۲۰٬۰۰۰ کیلومتر.',
+    specs: [['نوع فیلتر', 'پانلی'], ['طول', '۲۲۵', 'میلی‌متر'], ['عرض', '۱۷۰', 'میلی‌متر'], ['ارتفاع', '۴۸', 'میلی‌متر'], ['جنس قاب', 'پلی‌اورتان']],
+    family: 'air-filter-pride-series',
+    fitments: [
+      { model: 'pride-131' },
+      { model: 'tiba' },
+      { model: 'saina' },
+      { model: 'quick' },
+    ],
+    tags: ['فیلتر هوا', 'پراید', 'تیبا', 'ساینا'],
+  },
+  {
+    sku: 'BRK-DISC-206R', oem: '424946', mpn: 'BD-206-R', title: 'دیسک ترمز عقب پژو ۲۰۶ تیپ ۵ (جفت)',
+    titleEn: 'Rear Brake Disc Pair Peugeot 206 TIP5', category: 'brake-discs', brand: 'valeo',
+    manufacturer: 'Valeo', price: 2_150_000, stock: 9,
+    images: ['/demo/brake-disc.svg'], weight: 6_400, warranty: 12, country: 'فرانسه',
+    description: 'جفت دیسک ترمز عقب توپر با پوشش ضدزنگ. مناسب خودروهای مجهز به ترمز دیسکی عقب.',
+    specs: [['قطر', '۲۴۷', 'میلی‌متر'], ['ضخامت', '۹', 'میلی‌متر'], ['نوع', 'توپر'], ['تعداد پیچ', '۴', 'عدد'], ['تعداد در بسته', '۲', 'عدد']],
+    family: 'brake-disc-rear-206',
+    fitments: [
+      { model: 'peugeot-206', trim: 'TIP5' },
+    ],
+    references: [{ type: 'CROSS_REFERENCE', number: 'DF4249', brand: 'TRW' }],
+    tags: ['دیسک ترمز', 'عقب', 'پژو', '206'],
+  },
 ];
 
 /* ── shipping ───────────────────────────────────────────────────────── */
@@ -599,6 +811,7 @@ async function main() {
     /* vehicles */
     const modelIds = new Map<string, string>();
     const engineIds = new Map<string, string>();
+    const trimIds = new Map<string, string>();
     for (const vb of VEHICLES) {
       const [brandRow] = await tx
         .insert(vehicleBrands)
@@ -617,6 +830,31 @@ async function main() {
           .returning({ id: vehicleModels.id });
         modelIds.set(m.slug, modelRow!.id);
 
+        for (const g of m.generations ?? []) {
+          await tx
+            .insert(vehicleGenerations)
+            .values({
+              vehicleModelId: modelRow!.id, code: g.code, nameFa: g.nameFa,
+              yearFrom: g.yearFrom, yearTo: g.yearTo, isActive: true,
+            })
+            .onConflictDoUpdate({
+              target: [vehicleGenerations.vehicleModelId, vehicleGenerations.code],
+              set: { nameFa: g.nameFa },
+            });
+        }
+
+        for (const t of m.trims ?? []) {
+          const [trimRow] = await tx
+            .insert(vehicleTrims)
+            .values({ vehicleModelId: modelRow!.id, code: t.code, nameFa: t.nameFa, isActive: true })
+            .onConflictDoUpdate({
+              target: [vehicleTrims.vehicleModelId, vehicleTrims.code],
+              set: { nameFa: t.nameFa },
+            })
+            .returning({ id: vehicleTrims.id });
+          trimIds.set(`${m.slug}:${t.code}`, trimRow!.id);
+        }
+
         for (const e of m.engines) {
           const [engineRow] = await tx
             .insert(vehicleEngines)
@@ -633,7 +871,7 @@ async function main() {
         }
       }
     }
-    console.log(`  ✔ ${modelIds.size} vehicle models, ${engineIds.size} engines`);
+    console.log(`  ✔ ${modelIds.size} vehicle models, ${engineIds.size} engines, ${trimIds.size} trims`);
 
     /* products */
     for (const p of PRODUCTS) {
@@ -657,6 +895,7 @@ async function main() {
           countryOfOrigin: p.country,
           condition: p.condition ?? 'new',
           installationNotes: p.installation ?? null,
+          productFamily: p.family ?? null,
           tags: p.tags,
           seoTitle: `${p.title} | خرید آنلاین قطعات یدکی`,
           seoDescription: p.description.slice(0, 300),
@@ -689,20 +928,42 @@ async function main() {
         })),
       );
 
-      await tx.delete(productVehicleCompat).where(sql`product_id = ${productId}`);
+      await tx.delete(productFitments).where(sql`product_id = ${productId}`);
       for (const f of p.fitments) {
         const modelId = modelIds.get(f.model);
         if (!modelId) continue;
-        await tx
-          .insert(productVehicleCompat)
-          .values({
-            productId,
+        const configurationId = await getOrCreateConfiguration(
+          {
             vehicleModelId: modelId,
+            vehicleTrimId: f.trim ? (trimIds.get(`${f.model}:${f.trim}`) ?? null) : null,
             vehicleEngineId: f.engine ? (engineIds.get(`${f.model}:${f.engine}`) ?? null) : null,
             yearFrom: f.yearFrom ?? null,
             yearTo: f.yearTo ?? null,
+          },
+          tx,
+        );
+        await tx
+          .insert(productFitments)
+          .values({
+            productId,
+            vehicleConfigurationId: configurationId,
+            fitmentType: f.type ?? 'DIRECT',
+            note: f.note ?? null,
+            source: 'seed',
           })
           .onConflictDoNothing();
+      }
+
+      await tx.delete(productReferences).where(sql`product_id = ${productId}`);
+      if (p.references && p.references.length > 0) {
+        await tx.insert(productReferences).values(
+          p.references.map((r) => ({
+            productId,
+            relationType: r.type,
+            targetNumber: r.number,
+            targetBrand: r.brand ?? null,
+          })),
+        );
       }
 
       await tx

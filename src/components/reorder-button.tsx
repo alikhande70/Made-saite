@@ -49,7 +49,7 @@ export function ReorderButton({
 
   return (
     <div>
-      <Button type="button" variant="signal" size="sm" onClick={reorder} disabled={busy}>
+      <Button type="button" variant="accent" size="sm" onClick={reorder} disabled={busy}>
         {busy ? 'در حال افزودن…' : 'سفارش مجدد'}
       </Button>
       {message && <p role="alert" className="error-text max-w-xs">{message}</p>}

@@ -32,7 +32,7 @@ export default async function AccountOrdersPage() {
         <EmptyState
           title="هنوز سفارشی ثبت نکرده‌اید"
           icon={<BoxIcon className="size-10" />}
-          action={<LinkButton href="/categories" variant="signal">شروع خرید</LinkButton>}
+          action={<LinkButton href="/categories" variant="accent">شروع خرید</LinkButton>}
         />
       ) : (
         <ul className="space-y-3">

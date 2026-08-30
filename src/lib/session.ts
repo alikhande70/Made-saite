@@ -9,7 +9,10 @@ import { errors } from '@/domain/errors';
 import { randomToken, sha256 } from './crypto';
 
 export const ANON_CART_COOKIE = 'ms_cart';
+/** The vehicle the shopper is browsing as. Not sensitive; readable by the UI. */
+export const SELECTED_VEHICLE_COOKIE = 'ms_vehicle';
 const ANON_CART_TTL_DAYS = 60;
+const VEHICLE_TTL_DAYS = 180;
 
 /**
  * `Secure` is keyed to the deployment's own scheme rather than NODE_ENV.
@@ -82,6 +85,38 @@ export async function ensureAnonCartToken(): Promise<string> {
     expires: new Date(Date.now() + ANON_CART_TTL_DAYS * 86_400_000),
   });
   return token;
+}
+
+/**
+ * The vehicle configuration the shopper is browsing as.
+ *
+ * Signed-in customers get their default garage vehicle; guests get a cookie, so
+ * vehicle-first shopping works before registration. The cookie stores only a
+ * configuration id — a public taxonomy key, not personal data — so it is
+ * deliberately not httpOnly: client components read it to keep the UI in step.
+ */
+export async function getSelectedVehicleId(): Promise<string | null> {
+  const cookieValue = (await cookies()).get(SELECTED_VEHICLE_COOKIE)?.value ?? null;
+  if (cookieValue) return cookieValue;
+
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const { getDefaultVehicle } = await import('@/application/garage-service');
+  const vehicle = await getDefaultVehicle(user.id).catch(() => null);
+  return vehicle?.configurationId ?? null;
+}
+
+export async function setSelectedVehicleCookie(configurationId: string | null): Promise<void> {
+  const jar = await cookies();
+  if (!configurationId) {
+    jar.set(SELECTED_VEHICLE_COOKIE, '', { ...sessionCookieOptions, httpOnly: false, maxAge: 0 });
+    return;
+  }
+  jar.set(SELECTED_VEHICLE_COOKIE, configurationId, {
+    ...sessionCookieOptions,
+    httpOnly: false,
+    expires: new Date(Date.now() + VEHICLE_TTL_DAYS * 86_400_000),
+  });
 }
 
 export async function clearAnonCartCookie(): Promise<void> {

@@ -61,7 +61,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                     <Icon className="size-4 text-steel-400" />
                     {label}
                     {href === '/admin/orders' && summary && summary.actionableCount > 0 && (
-                      <span className="ms-auto rounded-full bg-signal-600 px-1.5 text-[0.6875rem] font-bold text-white">
+                      <span className="ms-auto rounded-full bg-accent-600 px-1.5 text-[0.6875rem] font-bold text-white">
                         {toPersianDigits(summary.actionableCount)}
                       </span>
                     )}

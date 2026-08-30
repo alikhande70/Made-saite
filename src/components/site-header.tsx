@@ -6,6 +6,7 @@ import { getStoreProfile } from '@/application/settings-service';
 import { toPersianDigits } from '@/lib/fa';
 import { SearchBox } from './search-box';
 import { MobileNav } from './mobile-nav';
+import { ActiveVehicleBar } from './active-vehicle-bar';
 import { CarIcon, CartIcon, ChevronDown, PhoneIcon, UserIcon, WrenchIcon } from './ui';
 
 export async function SiteHeader() {
@@ -31,7 +32,7 @@ export async function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 bg-steel-900 text-steel-50">
       {store.isDemo && (
-        <div className="bg-signal-600 px-3 py-1.5 text-center text-xs font-semibold text-white sm:text-[0.8125rem]">
+        <div className="bg-accent-600 px-3 py-1.5 text-center text-xs font-semibold text-white sm:text-[0.8125rem]">
           {store.demoNotice}
         </div>
       )}
@@ -58,7 +59,7 @@ export async function SiteHeader() {
         <MobileNav categories={navCategories} />
 
         <Link href="/" className="flex shrink-0 items-center gap-2" aria-label={store.name}>
-          <span className="grid size-9 place-items-center rounded-lg bg-signal-600 text-white">
+          <span className="grid size-9 place-items-center rounded-lg bg-accent-600 text-white">
             <WrenchIcon className="size-5" />
           </span>
           <span className="text-base font-extrabold leading-none text-white sm:text-lg">
@@ -90,7 +91,7 @@ export async function SiteHeader() {
             <span className="hidden lg:inline">سبد خرید</span>
             {cartCount > 0 && (
               <span
-                className="absolute -top-1 -end-1 grid min-w-5 place-items-center rounded-full bg-signal-500 px-1 text-[0.6875rem] font-bold text-white"
+                className="absolute -top-1 -end-1 grid min-w-5 place-items-center rounded-full bg-accent-500 px-1 text-[0.6875rem] font-bold text-white"
                 aria-label={`${toPersianDigits(cartCount)} کالا در سبد خرید`}
               >
                 {toPersianDigits(cartCount)}
@@ -126,13 +127,15 @@ export async function SiteHeader() {
           ))}
           <Link
             href="/vehicles"
-            className="ms-auto inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold text-signal-300 hover:bg-steel-800"
+            className="ms-auto inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold text-accent-300 hover:bg-steel-800"
           >
             <CarIcon className="size-4" />
             انتخاب قطعه بر اساس خودرو
           </Link>
         </div>
       </nav>
+
+      <ActiveVehicleBar />
     </header>
   );
 }

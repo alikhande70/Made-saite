@@ -40,7 +40,7 @@ export default async function AccountPage() {
           title="هنوز سفارشی ثبت نکرده‌اید"
           description="اولین قطعهٔ موردنیاز خودروی خود را پیدا کنید."
           icon={<BoxIcon className="size-10" />}
-          action={<LinkButton href="/categories" variant="signal">شروع خرید</LinkButton>}
+          action={<LinkButton href="/categories" variant="accent">شروع خرید</LinkButton>}
         />
       ) : (
         <ul className="space-y-3">

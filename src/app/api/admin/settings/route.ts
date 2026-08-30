@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getStoreProfile, updateStoreProfile } from '@/application/settings-service';
 import { adminRoute } from '@/lib/admin-http';
+import { recordAudit } from '@/application/audit-service';
 import { jsonOk, readJson } from '@/lib/http';
 
 const schema = z.object({
@@ -16,7 +17,16 @@ const schema = z.object({
 
 export const GET = adminRoute(async () => jsonOk(await getStoreProfile()));
 
-export const PATCH = adminRoute(async (request) => {
-  await updateStoreProfile(schema.parse(await readJson(request)));
+export const PATCH = adminRoute(async (request, admin, _ctx, audit) => {
+  const patch = schema.parse(await readJson(request));
+  await updateStoreProfile(patch);
+  await recordAudit({
+    actorUserId: admin.id,
+    action: 'settings.update',
+    entityType: 'store',
+    summary: `تنظیمات فروشگاه به‌روزرسانی شد (${Object.keys(patch).join('، ')}).`,
+    metadata: patch as Record<string, unknown>,
+    ipHash: audit.ipHash,
+  });
   return jsonOk(await getStoreProfile());
 });

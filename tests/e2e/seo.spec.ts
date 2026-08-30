@@ -98,6 +98,90 @@ test.describe('SEO', () => {
     }
   });
 
+  /*
+   * Regression guard for a soft-404.
+   *
+   * A `loading.tsx` above these routes makes Next flush the response before
+   * the page component runs, so `notFound()` can only swap the body and the
+   * status stays 200 — a soft 404 that search engines index and monitoring
+   * reads as healthy. Loading boundaries therefore live only on routes that
+   * never call `notFound()`; this test fails if one is added above one that
+   * does.
+   */
+  test('missing resources answer with a real 404 status, not a soft 404', async ({ request }) => {
+    const missing = [
+      '/products/no-such-product-slug',
+      '/categories/no-such-category',
+      '/brands/no-such-brand',
+      '/parts/no-such-category/no-such-vehicle',
+      '/orders/track/not-a-real-tracking-token',
+    ];
+    for (const path of missing) {
+      const response = await request.get(path);
+      expect(response.status(), `${path} must answer 404`).toBe(404);
+    }
+  });
+
+  test('faceted catalogue URLs are noindex while the bare listing is indexable', async ({ page }) => {
+    // The bare listing is the one canonical, indexable URL for the surface.
+    await page.goto('/products');
+    expect(await page.locator('meta[name="robots"]').first().getAttribute('content')).toContain('index');
+    expect(await page.locator('meta[name="robots"]').first().getAttribute('content')).not.toContain('noindex');
+
+    // Any filter, sort or page combination is served but not indexed (ADR-004).
+    for (const query of ['?inStock=true', '?sort=price_asc', '?minPrice=100000&maxPrice=900000', '?page=2']) {
+      await page.goto(`/products${query}`);
+      const robots = await page.locator('meta[name="robots"]').first().getAttribute('content');
+      expect(robots, `/products${query} must be noindex`).toContain('noindex');
+      // `follow` is kept so link equity still reaches the products themselves.
+      expect(robots, `/products${query} must stay followable`).toContain('follow');
+    }
+  });
+
+  test('a vehicle landing page is indexable only above the inventory threshold', async ({ page }) => {
+    const qualifying = await query<{ category: string; model: string }>(
+      `select c.slug as category, vm.slug as model
+         from products p
+         join categories c on c.id = p.category_id and c.is_active
+         join product_fitments pf on pf.product_id = p.id and pf.fitment_type <> 'NOT_COMPATIBLE'
+         join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+         join vehicle_models vm on vm.id = vc.vehicle_model_id
+        where p.is_active
+        group by 1, 2
+       having count(distinct p.id) >= 3
+        limit 1`,
+    );
+    test.skip(qualifying.length === 0, 'no pairing clears the landing-page threshold');
+
+    const { category, model } = qualifying[0]!;
+    await page.goto(`/parts/${category}/${model}`);
+    const robots = await page.locator('meta[name="robots"]').first().getAttribute('content');
+    expect(robots).toContain('index');
+    expect(robots).not.toContain('noindex');
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      'href', new RegExp(`/parts/${category}/${model}$`),
+    );
+
+    // A pairing below the threshold still renders, but must not be indexed.
+    const thin = await query<{ category: string; model: string }>(
+      `select c.slug as category, vm.slug as model
+         from products p
+         join categories c on c.id = p.category_id and c.is_active
+         join product_fitments pf on pf.product_id = p.id and pf.fitment_type <> 'NOT_COMPATIBLE'
+         join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+         join vehicle_models vm on vm.id = vc.vehicle_model_id
+        where p.is_active
+        group by 1, 2
+       having count(distinct p.id) < 3
+        limit 1`,
+    );
+    if (thin.length > 0) {
+      await page.goto(`/parts/${thin[0]!.category}/${thin[0]!.model}`);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      expect(await page.locator('meta[name="robots"]').first().getAttribute('content')).toContain('noindex');
+    }
+  });
+
   test('security headers are present', async ({ request }) => {
     const response = await request.get('/');
     const headers = response.headers();

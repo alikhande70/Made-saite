@@ -1,6 +1,8 @@
 import { getCategoryTree, getFacets, getVehicleTree, searchProducts } from '@/application/catalog-service';
+import { evaluateManyForConfiguration } from '@/application/fitment-service';
+import { getSelectedVehicleId } from '@/lib/session';
 import { productQuerySchema } from '@/lib/validation';
-import { ProductGrid } from './product-card';
+import { ProductGrid, type VerdictMap } from './product-card';
 import { ProductFilters, SortSelect, type FilterState } from './product-filters';
 import { EmptyState, Pagination, SearchIcon } from './ui';
 import { toPersianDigits } from '@/lib/fa';
@@ -59,14 +61,16 @@ export async function ProductListing({
   overrides = {},
   lockCategory = false,
   lockBrand = false,
+  lockVehicle = false,
   heading,
   emptyTitle = 'کالایی یافت نشد',
   emptyDescription = 'فیلترها را تغییر دهید یا عبارت دیگری را جست‌وجو کنید.',
 }: {
   searchParams: RawSearchParams;
-  overrides?: Partial<{ category: string; brand: string[] }>;
+  overrides?: Partial<{ category: string; brand: string[]; vehicleModel: string }>;
   lockCategory?: boolean;
   lockBrand?: boolean;
+  lockVehicle?: boolean;
   heading?: string;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -76,14 +80,31 @@ export async function ProductListing({
     ...base,
     ...(overrides.category ? { category: overrides.category } : {}),
     ...(overrides.brand ? { brand: overrides.brand } : {}),
+    ...(overrides.vehicleModel ? { vehicleModel: overrides.vehicleModel } : {}),
   };
 
-  const [results, facets, categories, vehicles] = await Promise.all([
+  const [results, facets, categories, vehicles, activeVehicleId] = await Promise.all([
     searchProducts(query),
     getFacets(query),
     getCategoryTree(),
     getVehicleTree(),
+    getSelectedVehicleId().catch(() => null),
   ]);
+
+  /*
+   * One query for the whole page of results, then a pure evaluation per
+   * product — badging a 24-card grid must not cost 24 round trips.
+   */
+  let verdicts: VerdictMap | undefined;
+  if (activeVehicleId && results.items.length > 0) {
+    const evaluated = await evaluateManyForConfiguration(
+      results.items.map((i) => i.id),
+      activeVehicleId,
+    ).catch(() => null);
+    if (evaluated) {
+      verdicts = new Map([...evaluated].map(([id, r]) => [id, r.verdict]));
+    }
+  }
 
   const brandParam = query.brand ? (Array.isArray(query.brand) ? query.brand : [query.brand]) : [];
   const state: FilterState = {
@@ -110,6 +131,7 @@ export async function ProductListing({
             state={state}
             lockCategory={lockCategory}
             lockBrand={lockBrand}
+            lockVehicle={lockVehicle}
             total={results.total}
           />
         </div>
@@ -133,7 +155,7 @@ export async function ProductListing({
           <EmptyState title={emptyTitle} description={emptyDescription} icon={<SearchIcon className="size-10" />} />
         ) : (
           <>
-            <ProductGrid products={results.items} />
+            <ProductGrid products={results.items} verdicts={verdicts} />
             <Pagination
               page={results.page}
               totalPages={results.totalPages}

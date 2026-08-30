@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { uuidSchema, imageUrlSchema } from '@/lib/validation';
 import { deleteCategory, listCategoriesAdmin, upsertCategory } from '@/application/admin-service';
 import { adminRoute } from '@/lib/admin-http';
+import { recordAudit } from '@/application/audit-service';
 import { jsonOk, readJson } from '@/lib/http';
 
 const schema = z.object({
@@ -21,12 +22,26 @@ const schema = z.object({
 
 export const GET = adminRoute(async () => jsonOk(await listCategoriesAdmin()));
 
-export const POST = adminRoute(async (request) =>
-  jsonOk(await upsertCategory(schema.parse(await readJson(request)))),
-);
+export const POST = adminRoute(async (request, admin, _ctx, audit) => {
+  const input = schema.parse(await readJson(request));
+  const row = await upsertCategory(input);
+  await recordAudit({
+    actorUserId: admin.id,
+    action: 'category.upsert',
+    entityType: 'category',
+    entityId: row.id,
+    summary: `دستهٔ «${row.nameFa}» ${input.id ? 'ویرایش' : 'ایجاد'} شد.`,
+    ipHash: audit.ipHash,
+  });
+  return jsonOk(row);
+});
 
-export const DELETE = adminRoute(async (request) => {
+export const DELETE = adminRoute(async (request, admin, _ctx, audit) => {
   const id = uuidSchema.parse(new URL(request.url).searchParams.get('id'));
   await deleteCategory(id);
+  await recordAudit({
+    actorUserId: admin.id, action: 'category.delete', entityType: 'category', entityId: id,
+    summary: 'دسته حذف شد.', ipHash: audit.ipHash,
+  });
   return jsonOk({ deleted: true });
 });

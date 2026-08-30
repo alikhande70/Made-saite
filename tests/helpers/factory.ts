@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/infrastructure/db/client';
 import {
   brands, categories, inventory, productImages, products, shippingMethods,
-  users, vehicleBrands, vehicleEngines, vehicleModels, productVehicleCompat,
+  users, vehicleBrands, vehicleEngines, vehicleModels, vehicleTrims, productFitments,
 } from '@/infrastructure/db/schema';
 import { hashPassword } from '@/lib/crypto';
 
@@ -17,12 +17,13 @@ export async function resetDatabase(): Promise<void> {
       order_events, order_items, payments, shipments, orders,
       cart_items, carts,
       inventory_events, inventory,
-      product_vehicle_compat, product_specs, product_images, products,
-      vehicle_engines, vehicle_models, vehicle_brands,
+      product_fitments, product_references, product_specs, product_images, products,
+      customer_vehicles, vehicle_configurations,
+      vehicle_engines, vehicle_trims, vehicle_generations, vehicle_models, vehicle_brands,
       categories, brands,
       shipping_rates, shipping_methods,
       sessions, addresses, users,
-      store_settings, rate_limits
+      store_settings, rate_limits, admin_audit_log, import_jobs
     restart identity cascade
   `);
 }
@@ -160,22 +161,41 @@ export async function createVehicle() {
   return { brand: brand!, model: model!, engine: engine! };
 }
 
+/** Records a fitment, creating the vehicle configuration it needs. */
 export async function addFitment(
   productId: string,
   modelId: string,
   engineId: string | null = null,
   years: { from?: number; to?: number } = {},
+  options: { trimId?: string | null; type?: 'DIRECT' | 'WITH_MODIFICATION' | 'NOT_COMPATIBLE'; note?: string } = {},
 ) {
+  const { getOrCreateConfiguration } = await import('@/application/fitment-service');
+  const configurationId = await getOrCreateConfiguration({
+    vehicleModelId: modelId,
+    vehicleEngineId: engineId,
+    vehicleTrimId: options.trimId ?? null,
+    yearFrom: years.from ?? null,
+    yearTo: years.to ?? null,
+  });
   await getDb()
-    .insert(productVehicleCompat)
+    .insert(productFitments)
     .values({
       productId,
-      vehicleModelId: modelId,
-      vehicleEngineId: engineId,
-      yearFrom: years.from ?? null,
-      yearTo: years.to ?? null,
+      vehicleConfigurationId: configurationId,
+      fitmentType: options.type ?? 'DIRECT',
+      note: options.note ?? null,
     })
     .onConflictDoNothing();
+  return configurationId;
+}
+
+/** Adds a trim to a model, for fitment tests that narrow on one. */
+export async function createTrim(modelId: string, code = 'TIP5', nameFa = 'تیپ ۵') {
+  const [row] = await getDb()
+    .insert(vehicleTrims)
+    .values({ vehicleModelId: modelId, code, nameFa, isActive: true })
+    .returning();
+  return row!;
 }
 
 /** Reads current stock numbers straight from the table. */
