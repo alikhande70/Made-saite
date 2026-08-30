@@ -117,12 +117,24 @@ export function VehicleSelector({
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        throw new Error(body?.error?.message ?? 'ثبت خودرو انجام نشد. دوباره تلاش کنید.');
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? 'ثبت خودرو انجام نشد. دوباره تلاش کنید.');
       }
       if (mode === 'garage') { setNickname(''); }
       onSaved?.();
-      if (redirectTo) router.push(redirectTo);
+
+      /*
+       * The cookie carries the vehicle everywhere, but the listing filter also
+       * goes in the URL: a filtered catalogue must stay shareable, bookmarkable
+       * and reachable by the back button, which a cookie alone is not.
+       */
+      if (redirectTo) {
+        const params = new URLSearchParams({ vehicleModel: model.slug });
+        const engineCode = detail?.engines.find((en) => en.id === engineId)?.code;
+        if (engineCode) params.set('vehicleEngine', engineCode);
+        if (year) params.set('vehicleYear', year);
+        router.push(`${redirectTo}?${params.toString()}`);
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'خطای ناشناخته');

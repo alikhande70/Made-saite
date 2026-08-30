@@ -176,3 +176,79 @@ cache. The catalogue is read through indexed queries rather than cached, which i
 the right default for a store whose stock changes with every order. Adding
 `revalidateTag` caching for category and brand pages is a straightforward later
 optimisation — the data access is already centralised in `catalog-service`.
+
+### Loading boundaries and the 404 status
+
+A `loading.tsx` file creates a Suspense boundary above its whole segment. Next
+then flushes the HTTP response before the page component runs, so a later
+`notFound()` can only swap the rendered body — the status stays **200**. That is
+a soft 404: search engines index it, monitoring reads it as healthy, and link
+checkers miss it.
+
+The rule this repository follows:
+
+> A loading boundary may only sit above routes that never call `notFound()`.
+
+In practice `/products` and `/search` are the slow listing surfaces that want a
+skeleton, and neither can 404. `/products` uses an explicit `<Suspense>` *inside*
+the page rather than a `loading.tsx` file, because a file in that segment would
+also wrap `/products/[slug]`, which does 404. `tests/e2e/seo.spec.ts` asserts
+real 404 statuses on all five missing-resource routes, so re-introducing the
+problem fails CI.
+
+---
+
+## Fitment resolution
+
+The "does this part fit my car?" answer is computed on the server from recorded
+fitment rows and nothing else — never from prose in a description, and never in
+the browser.
+
+```
+vehicle configuration (id in a cookie or «گاراژ من»)
+        │
+        ▼
+listFitmentsForProduct ──► evaluateCompatibility (pure, src/domain/fitment.ts)
+        │                          │
+        │                          ├─ only rows that definitively apply decide
+        │                          ├─ the most specific matching row wins
+        │                          ├─ at equal specificity, an exclusion wins
+        │                          └─ no definitive match ⇒ UNKNOWN
+        ▼
+CompatibilityPanel  ✓ سازگار · ! سازگار با تغییر · ✕ ناسازگار · ؟ اطلاعات کافی نیست
+```
+
+Two properties are load-bearing:
+
+- **Missing data is never a negative.** A product nobody has mapped resolves to
+  UNKNOWN with an explicit "we do not know" message. Rendering that as "does not
+  fit" would invent a fact; rendering it as "fits" would be worse.
+- **Listing pages badge without an N+1.** `evaluateManyForConfiguration` reads
+  every fitment row for a page of products in one query and then evaluates each
+  purely, so a 24-card grid costs one round trip, not 24. Every product on the
+  page gets a verdict — including UNKNOWN — so an unbadged card cannot be read
+  as an implicit "fits".
+
+---
+
+## Bulk import
+
+Two phases, two requests, one transaction:
+
+```
+POST /api/admin/imports   parse → coerce → validate → resolve references
+                          └─► import_jobs row (payload + errors). Writes nothing else.
+PUT  /api/admin/imports   re-resolve references → apply payload → flip status
+                          └─► one transaction for the whole file
+```
+
+The split exists so an administrator sees exactly what will change before
+anything changes, and the single transaction exists so a file that fails at row
+1,900 leaves rows 1–1,899 unwritten. References are re-resolved at commit time
+because the catalogue can change between preview and apply — a preview is not a
+licence to write stale foreign keys.
+
+Nothing is auto-created from an import. An unknown brand, category, vehicle
+model, engine or trim fails the row and is named in the report, because a typo
+in a supplier's brand column must not silently mint a brand, and a silently
+dropped fitment produces a part that appears to fit nothing.

@@ -92,10 +92,34 @@ test.describe('customer purchase journey', () => {
     await expect(compatibility.first()).toBeVisible();
   });
 
-  test('search finds a part by its OEM number', async ({ page }) => {
+  test('search finds a part by its OEM number, and its documented equivalents', async ({ page }) => {
     await page.goto('/search?q=1109AY');
-    await expect(page.locator('article')).toHaveCount(1);
-    await expect(page.locator('article').first()).toContainText('فیلتر روغن');
+
+    /*
+     * A part-number search legitimately returns more than the one product that
+     * carries the number: parts that cross-reference it are equivalents the
+     * shopper is looking for. What matters is that the exact OEM match ranks
+     * first — an equivalent must never outrank the part itself.
+     */
+    const cards = page.locator('article');
+    await expect(cards.first()).toContainText('فیلتر روغن');
+
+    const owner = await query<{ slug: string }>(
+      `select slug from products where oem_number = '1109AY' and is_active limit 1`,
+    );
+    expect(owner).toHaveLength(1);
+    const firstHref = await cards.first().locator('h3 a').getAttribute('href');
+    expect(decodeURIComponent(firstHref ?? '')).toContain(owner[0]!.slug);
+
+    // Every result must genuinely reference the number, not merely resemble it.
+    const matching = await query<{ n: string }>(
+      `select count(*)::text as n from products p
+        where p.is_active
+          and (p.oem_number = '1109AY' or p.sku = '1109AY'
+               or exists (select 1 from product_references r
+                           where r.product_id = p.id and r.target_number = '1109AY'))`,
+    );
+    expect(await cards.count()).toBe(Number(matching[0]!.n));
   });
 
   test('an out-of-stock product cannot be added to the cart', async ({ page }) => {

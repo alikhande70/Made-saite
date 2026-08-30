@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Persian search depends on pg_trgm extracting trigrams from Persian text,
+  # which it only does under a UTF-8 database locale. A `C` locale silently
+  # produces zero trigrams and disables fuzzy matching without any error —
+  # so the CI database must match production's collation.
+  PGLOCALE: C.UTF-8
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: made_saite_test
+          POSTGRES_INITDB_ARGS: '--locale=C.UTF-8 --encoding=UTF8'
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/made_saite_test
+      SITE_URL: http://localhost:3100
+      AUTH_SECRET: ci_only_auth_secret_do_not_use_in_production_0000
+      MOCK_GATEWAY_SECRET: ci_only_gateway_secret_0000
+      PAYMENT_PROVIDER: mock
+      ORDER_PAYMENT_TTL_MINUTES: '30'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify the database locale supports Persian trigrams
+        run: |
+          psql "$DATABASE_URL" -c "create extension if not exists pg_trgm;"
+          COUNT=$(psql "$DATABASE_URL" -tAc "select array_length(show_trgm('فیلتر روغن'), 1);")
+          echo "trigrams extracted from Persian text: ${COUNT:-0}"
+          if [ -z "$COUNT" ] || [ "$COUNT" -lt 1 ]; then
+            echo "::error::pg_trgm produced no trigrams for Persian text — the database locale is not UTF-8."
+            exit 1
+          fi
+
+      - run: npx tsc --noEmit
+        name: Typecheck
+
+      - run: npm run lint
+
+      - run: npm run db:migrate
+        name: Apply migrations
+
+      - run: npm run db:seed
+        name: Seed demo data
+
+      - run: npm test
+        name: Unit, API and integration tests
+
+      - run: npx playwright install --with-deps chromium
+        name: Install browser
+
+      - run: npm run build
+        name: Production build
+
+      - run: npm run test:e2e
+        name: End-to-end tests
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

@@ -10,17 +10,11 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb, type Database } from '@/infrastructure/db/client';
 import { adminAuditLog, users } from '@/infrastructure/db/schema';
+import type { AuditAction } from '@/domain/audit';
 
-export type AuditAction =
-  | 'product.create' | 'product.update' | 'product.publish' | 'product.unpublish'
-  | 'inventory.adjust'
-  | 'order.transition' | 'order.tracking' | 'order.settle_cash'
-  | 'category.upsert' | 'category.delete'
-  | 'brand.upsert' | 'brand.delete'
-  | 'shipping.upsert' | 'shipping.delete'
-  | 'customer.activate' | 'customer.deactivate'
-  | 'settings.update'
-  | 'import.validate' | 'import.commit';
+export { AUDIT_ACTION_LABEL_FA } from '@/domain/audit';
+export type { AuditAction } from '@/domain/audit';
+
 
 export interface AuditEntry {
   actorUserId: string | null;
@@ -118,25 +112,3 @@ export async function listAuditActions(db: Database = getDb()): Promise<string[]
     .orderBy(adminAuditLog.action);
   return rows.map((r) => r.action);
 }
-
-export const AUDIT_ACTION_LABEL_FA: Record<string, string> = {
-  'product.create': 'ایجاد کالا',
-  'product.update': 'ویرایش کالا',
-  'product.publish': 'انتشار کالا',
-  'product.unpublish': 'خروج کالا از انتشار',
-  'inventory.adjust': 'تغییر موجودی',
-  'order.transition': 'تغییر وضعیت سفارش',
-  'order.tracking': 'ثبت کد رهگیری',
-  'order.settle_cash': 'ثبت دریافت وجه',
-  'category.upsert': 'ثبت/ویرایش دسته',
-  'category.delete': 'حذف دسته',
-  'brand.upsert': 'ثبت/ویرایش برند',
-  'brand.delete': 'حذف برند',
-  'shipping.upsert': 'ثبت/ویرایش روش ارسال',
-  'shipping.delete': 'حذف روش ارسال',
-  'customer.activate': 'فعال‌سازی مشتری',
-  'customer.deactivate': 'مسدودسازی مشتری',
-  'settings.update': 'تغییر تنظیمات فروشگاه',
-  'import.validate': 'بررسی فایل ورودی',
-  'import.commit': 'اعمال فایل ورودی',
-};

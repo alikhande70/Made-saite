@@ -5,7 +5,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ctx, makeRequest, readResponse, resetContext, signIn, signOut } from '../helpers/api';
 import { closePool, getDb } from '@/infrastructure/db/client';
-import { createProduct, createShippingMethod, createUser, resetDatabase, stockOf } from '../helpers/factory';
+import { createProduct, createShippingMethod, createUser, createVehicle, resetDatabase, stockOf } from '../helpers/factory';
+import { eq } from 'drizzle-orm';
+import { products } from '@/infrastructure/db/schema';
 
 beforeEach(async () => {
   await resetDatabase();
@@ -493,5 +495,165 @@ describe('account address ownership', () => {
     const addresses = await import('@/app/api/account/addresses/route');
     const res = await readResponse(await addresses.GET());
     expect(res.status).toBe(401);
+  });
+});
+
+/* ── vehicle selection, garage and bulk import ────────────────────────── */
+
+describe('POST /api/vehicle', () => {
+  it('lets a guest choose a vehicle and sets the cookie', async () => {
+    const { model, engine } = await createVehicle();
+    const { POST } = await import('@/app/api/vehicle/route');
+
+    const res = await readResponse<{ id: string; modelSlug: string }>(
+      await POST(makeRequest('/api/vehicle', {
+        method: 'POST',
+        body: { vehicleModelId: model.id, vehicleEngineId: engine.id, year: 1398 },
+      }) as never),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data!.modelSlug).toBe(model.slug);
+    // The cookie holds a public taxonomy id, not a credential.
+    expect(ctx.cookies.get('ms_vehicle')).toBe(res.body.data!.id);
+  });
+
+  it('rejects a cross-site vehicle change', async () => {
+    const { model } = await createVehicle();
+    const { POST } = await import('@/app/api/vehicle/route');
+    const res = await readResponse(
+      await POST(makeRequest('/api/vehicle', {
+        method: 'POST', origin: 'https://evil.example', body: { vehicleModelId: model.id },
+      }) as never),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a model id that is not a UUID', async () => {
+    const { POST } = await import('@/app/api/vehicle/route');
+    const res = await readResponse(
+      await POST(makeRequest('/api/vehicle', { method: 'POST', body: { vehicleModelId: "1' or '1'='1" } }) as never),
+    );
+    expect(res.status).toBe(422);
+  });
+});
+
+describe('/api/account/garage', () => {
+  it('requires authentication', async () => {
+    const garage = await import('@/app/api/account/garage/route');
+    expect((await readResponse(await garage.GET())).status).toBe(401);
+  });
+
+  it('does not let one customer touch another’s vehicle', async () => {
+    const owner = await createUser('customer', '09120000021');
+    const stranger = await createUser('customer', '09120000022');
+    const { model } = await createVehicle();
+    const garage = await import('@/app/api/account/garage/route');
+
+    await signIn(owner.id);
+    const created = await readResponse<{ id: string }>(
+      await garage.POST(makeRequest('/api/account/garage', {
+        method: 'POST', body: { vehicleModelId: model.id, nickname: 'خودروی من' },
+      }) as never),
+    );
+    expect(created.status).toBe(201);
+    const vehicleId = created.body.data!.id;
+
+    signOut();
+    await signIn(stranger.id);
+    // 404, not 403: the stranger must not learn that the id exists.
+    expect((await readResponse(
+      await garage.DELETE(makeRequest(`/api/account/garage?id=${vehicleId}`, { method: 'DELETE' }) as never),
+    )).status).toBe(404);
+    expect((await readResponse(
+      await garage.PATCH(makeRequest('/api/account/garage', { method: 'PATCH', body: { vehicleId } }) as never),
+    )).status).toBe(404);
+    expect((await readResponse<unknown[]>(await garage.GET())).body.data).toHaveLength(0);
+
+    signOut();
+    await signIn(owner.id);
+    expect((await readResponse<unknown[]>(await garage.GET())).body.data).toHaveLength(1);
+  });
+});
+
+describe('/api/admin/imports', () => {
+  const csv = 'sku,title_fa,price,stock\nAPI-IMP-1,فیلتر آزمایشی,۲۵۰٬۰۰۰,۴';
+
+  it('refuses an anonymous caller and a signed-in customer', async () => {
+    const imports = await import('@/app/api/admin/imports/route');
+    expect((await readResponse(
+      await imports.GET(makeRequest('/api/admin/imports') as never, undefined as never),
+    )).status).toBe(401);
+
+    const customer = await createUser('customer', '09120000031');
+    await signIn(customer.id);
+    expect((await readResponse(
+      await imports.POST(makeRequest('/api/admin/imports', {
+        method: 'POST', body: { content: csv },
+      }) as never, undefined as never),
+    )).status).toBe(403);
+  });
+
+  it('rejects a cross-site import even with a valid admin session', async () => {
+    const admin = await createUser('admin', '09120000032');
+    await signIn(admin.id);
+    const imports = await import('@/app/api/admin/imports/route');
+    const res = await readResponse(
+      await imports.POST(makeRequest('/api/admin/imports', {
+        method: 'POST', origin: 'https://evil.example', body: { content: csv },
+      }) as never, undefined as never),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a payload above the byte limit, counting UTF-8 bytes', async () => {
+    const admin = await createUser('admin', '09120000033');
+    await signIn(admin.id);
+    const imports = await import('@/app/api/admin/imports/route');
+
+    // Persian is 2 bytes per character in UTF-8, so this is ~6 MB of body from
+    // 3M characters — a character-counted limit would let it through.
+    const oversized = 'ف'.repeat(3 * 1024 * 1024);
+    const res = await readResponse(
+      await imports.POST(makeRequest('/api/admin/imports', {
+        method: 'POST', body: { content: oversized },
+      }) as never, undefined as never),
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it('previews without writing, then commits once', async () => {
+    const admin = await createUser('admin', '09120000034');
+    await signIn(admin.id);
+    const imports = await import('@/app/api/admin/imports/route');
+
+    const preview = await readResponse<{ jobId: string; validRows: number }>(
+      await imports.POST(makeRequest('/api/admin/imports', {
+        method: 'POST', body: { filename: 'supplier.csv', content: csv },
+      }) as never, undefined as never),
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.body.data!.validRows).toBe(1);
+
+    // Nothing written yet.
+    const before = await getDb().select().from(products).where(eq(products.sku, 'API-IMP-1'));
+    expect(before).toHaveLength(0);
+
+    const commit = await readResponse<{ created: number }>(
+      await imports.PUT(makeRequest('/api/admin/imports', {
+        method: 'PUT', body: { jobId: preview.body.data!.jobId },
+      }) as never, undefined as never),
+    );
+    expect(commit.status).toBe(200);
+    expect(commit.body.data!.created).toBe(1);
+
+    // Re-submitting the same job is a no-op, not a double import.
+    const replay = await readResponse(
+      await imports.PUT(makeRequest('/api/admin/imports', {
+        method: 'PUT', body: { jobId: preview.body.data!.jobId },
+      }) as never, undefined as never),
+    );
+    expect(replay.status).toBe(409);
+    expect(await getDb().select().from(products).where(eq(products.sku, 'API-IMP-1'))).toHaveLength(1);
   });
 });

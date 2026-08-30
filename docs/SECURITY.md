@@ -126,6 +126,10 @@ raw IPs are never persisted.
 | Cart quantity abuse | Per-line cap of 20, enforced in schema, service and on merge. |
 | Inventory manipulation | Only `inventory-service` writes stock; admin-only; every movement needs a reason and is appended to `inventory_events`. A reduction below reserved quantity is refused. |
 | Order status tampering | The domain state machine is the only path; illegal transitions are rejected server-side regardless of what the UI offers. |
+| Bulk-import abuse | Admin-only and same-origin. Validation writes only an `import_jobs` row; the commit applies a stored payload in one transaction and flips the status, so a replayed job is a 409 rather than a double import. References are re-resolved at commit time, so a preview cannot authorise a stale write. Import can never push stock below what open orders reserve. Tested. |
+| Import as a catalogue-creation path | Nothing is auto-created. An unknown brand, category, vehicle model, engine or trim fails the row by name, so a typo in a supplier file cannot mint taxonomy. |
+| Import payload size | Capped at 4 MB **measured in UTF-8 bytes**, not characters — Persian is 2–3 bytes per character, so a character-counted cap would admit a file 2–3× the intended size. Row count is capped separately. Tested. |
+| Fitment claims without evidence | The compatibility verdict is computed server-side from `product_fitments` rows only. A missing row yields UNKNOWN, never a fabricated "fits" or "does not fit". |
 
 ## Data handling
 
@@ -142,6 +146,23 @@ raw IPs are never persisted.
 - **Internal order events** (`isPublic: false`) are filtered out of every
   customer-facing view; a test asserts an internal note never reaches the public
   tracking page.
+- **Admin audit log** records the actor, action, entity, a Persian summary and a
+  hashed IP for every privileged change. A redaction list strips `password`,
+  `token`, `secret`, `authority`, `providerRef`, `transactionId`, `cardNumber`
+  and `cvv` from metadata even if a caller passes them. Recording is
+  best-effort: an audit write that throws is logged and swallowed rather than
+  rolling back the legitimate action it describes (ADR-007 records the
+  trade-off, and what would have to change if the log ever became a compliance
+  control rather than an accountability aid).
+- **The selected-vehicle cookie is not a credential.** It holds a public
+  configuration id and is deliberately not `httpOnly` so client components can
+  read it. A forged or malformed value resolves to "no vehicle" — every read
+  goes through a parameterised lookup, and a miss renders the selector rather
+  than erroring.
+- **Garage ownership lives in the WHERE clause.** Every garage query is scoped
+  to the signed-in user id, so another customer's vehicle id matches nothing and
+  returns 404 rather than 403 — the caller does not learn that the id exists.
+  Tested at both the service and HTTP boundaries.
 
 ## HTTP headers
 
@@ -181,9 +202,17 @@ Verified by an E2E test that asserts the headers on a real response.
 4. **No image upload path**, therefore no upload validation. If one is added it
    needs content-type and magic-byte checks, a size cap, re-encoding, and storage
    outside the web root.
-5. **No audit log for admin catalogue edits.** Inventory and order changes are
-   audited; product/category/brand edits are not yet.
-6. **Two build-time-only advisories remain** in the dependency tree
+5. **Audit coverage is broad but not total.** Product, category, brand,
+   shipping, customer, settings, inventory, order and import actions are
+   recorded. Reads are not audited, and the log has no tamper-evidence
+   (no hash chain, no append-only database role) — it is an accountability aid,
+   not evidence.
+6. **Bulk import trusts an authenticated administrator with wide reach.** One
+   valid file can reprice or delist the whole catalogue. The controls are the
+   mandatory preview, the single transaction, and the audit entry — not a
+   second approver. A four-eyes approval step is the obvious follow-up for a
+   store with more than one administrator.
+7. **Two build-time-only advisories remain** in the dependency tree
    (`postcss@8.4.31` nested under Next, `esbuild` under `drizzle-kit`). Neither is
    reachable by a site visitor: both are development/build tooling, and the
    advisories require attacker-controlled input to those tools. The direct

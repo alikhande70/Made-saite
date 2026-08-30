@@ -141,3 +141,72 @@ test.describe('admin', () => {
     await expect(page.locator('[role="alert"]').filter({ hasText: 'کاهش موجودی' })).toBeVisible();
   });
 });
+
+test.describe('bulk import', () => {
+  /**
+   * The import must be visibly two-phase: nothing changes until an
+   * administrator has seen the errors and pressed apply.
+   */
+  test('a messy supplier file is previewed with errors before anything is written', async ({ page }) => {
+    await signIn(page, DEMO_ADMIN);
+
+    const existing = (await query<{ sku: string; price: string }>(
+      // No sale price, so a bare price update is a valid row on its own.
+      `select sku, price::text from products where is_active and sale_price is null order by sku limit 1`,
+    ))[0]!;
+    const newSku = `E2E-IMP-${Date.now()}`;
+
+    await page.goto('/admin/imports');
+    await expect(page.getByRole('heading', { level: 1, name: /درون‌ریزی گروهی/ })).toBeVisible();
+
+    // Persian digits, a thousands separator, one unreadable price and one
+    // unknown vehicle — all of which a supplier file really does contain.
+    const csv = [
+      'کد کالا,نام کالا,قیمت,موجودی,سازگاری',
+      `${existing.sku},,۹۹۹٬۰۰۰,۷,`,
+      `${newSku},قطعهٔ آزمایشی درون‌ریزی,۴۵۰۰۰۰,۳,`,
+      `${newSku}-BAD,قطعهٔ خراب,تماس بگیرید,۲,`,
+      `${newSku}-GHOST,قطعهٔ ناشناخته,۱۰۰۰۰۰,۱,ghost-model||||DIRECT`,
+    ].join('\n');
+
+    await page.getByLabel('فایل درون‌ریزی').setInputFiles({
+      name: 'supplier.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(csv, 'utf-8'),
+    });
+
+    // Errors are shown before the apply button is reachable.
+    await expect(page.getByText('خطاهای یافت‌شده — این ردیف‌ها اعمال نخواهند شد')).toBeVisible();
+    await expect(page.getByText('مقدار «تماس بگیرید» عدد معتبر نیست.')).toBeVisible();
+    await expect(page.getByText(/ghost-model/)).toBeVisible();
+
+    // Nothing has been written yet.
+    const untouched = await query<{ price: string }>(`select price::text from products where sku = $1`, [existing.sku]);
+    expect(untouched[0]!.price).toBe(existing.price);
+    expect(await query(`select 1 from products where sku = $1`, [newSku])).toHaveLength(0);
+
+    await page.getByRole('button', { name: /اعمال .* ردیف معتبر/ }).click();
+    await expect(page.getByText(/اعمال شد/)).toBeVisible();
+
+    // Only the two valid rows landed.
+    const updated = await query<{ price: string }>(`select price::text from products where sku = $1`, [existing.sku]);
+    expect(updated[0]!.price).toBe('999000');
+    expect(await query(`select 1 from products where sku = $1`, [newSku])).toHaveLength(1);
+    expect(await query(`select 1 from products where sku = $1`, [`${newSku}-BAD`])).toHaveLength(0);
+    expect(await query(`select 1 from products where sku = $1`, [`${newSku}-GHOST`])).toHaveLength(0);
+
+    // The action is recorded in the audit log.
+    await page.goto('/admin/audit');
+    await expect(page.getByRole('heading', { level: 1, name: /گزارش فعالیت/ })).toBeVisible();
+    // Scoped to the table: the same label also exists in the filter dropdown.
+    await expect(page.getByRole('cell', { name: 'اعمال فایل ورودی' }).first()).toBeVisible();
+    await expect(page.getByRole('cell', { name: /اعمال فایل درون‌ریزی/ }).first()).toBeVisible();
+  });
+
+  test('the audit log is admin-only', async ({ request }) => {
+    const response = await request.get('/admin/audit', { maxRedirects: 0 });
+    // Unauthenticated visitors are bounced to the login page, never shown the log.
+    expect([302, 307]).toContain(response.status());
+    expect(response.headers()['location']).toContain('/login');
+  });
+});

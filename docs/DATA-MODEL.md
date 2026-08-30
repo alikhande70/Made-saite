@@ -44,15 +44,67 @@ CHECK (sale_price IS NULL OR (sale_price >= 0 AND sale_price < price))
 The second makes a "sale" that raises the price impossible at the database level.
 
 ### Vehicles and fitment
-`vehicle_brands` → `vehicle_models` → `vehicle_engines`, joined to products by
-`product_vehicle_compat`.
 
-A fitment row means: *this product fits this model*, optionally narrowed to one
-engine and/or a Jalali year window. `NULL` engine means every engine; `NULL`
-years mean every year. A partial unique index (coalescing the nullable columns)
-prevents duplicate fitments, and a CHECK enforces `year_from <= year_to`.
+The taxonomy follows the shape of the ACES automotive standard rather than a
+flat product→vehicle join (ADR-002):
 
-This is what makes "پژو ۲۰۶ / TU5 / ۱۴۰۰" a SQL query rather than a text search.
+```
+vehicle_brands ─< vehicle_models ─┬─< vehicle_generations
+                                  ├─< vehicle_trims
+                                  └─< vehicle_engines
+                          ↘ all four ↙
+                     vehicle_configurations ─< product_fitments >─ products
+```
+
+A **configuration** is one addressable vehicle: a model, optionally narrowed by
+generation, trim, engine and a Jalali year window. `NULL` in any narrowing
+column means *any* — so `(206, NULL, NULL, NULL, NULL–NULL)` is "any 206" and
+`(206, NULL, TIP5, TU5, 1390–1400)` is one specific car. A unique index over the
+tuple (coalescing the nullable columns to a sentinel UUID, since SQL `NULL`
+never equals `NULL`) makes the same description resolve to the same row, and a
+`specificity` column records how many narrowing dimensions are set.
+
+A **fitment** links a product to a configuration with a type:
+
+| `fitment_type` | Meaning |
+| -------------- | ------- |
+| `DIRECT` | fits as-is |
+| `WITH_MODIFICATION` | fits, but the recorded note says what must change |
+| `NOT_COMPATIBLE` | recorded exclusion — this part does *not* fit this vehicle |
+
+The third is the one that matters most. Because exclusions are data rather than
+absence of data, a specific "does not fit پژو ۲۰۶ TU3" can override a broad
+"fits پژو ۲۰۶" — and a vehicle with no matching row at all resolves to
+**UNKNOWN**, never to "does not fit". The resolution rules live in
+`src/domain/fitment.ts` and are pure; the queries that feed them are in
+`src/application/fitment-service.ts`. See ADR-008.
+
+This is what makes "پژو ۲۰۶ / تیپ ۵ / TU5 / ۱۴۰۰" a SQL query rather than a
+text search.
+
+### Saved vehicles
+
+`customer_vehicles` links a user to a configuration («گاراژ من»), unique on
+(user, configuration), with exactly one default enforced by the service. Guests
+get the same capability through a cookie holding a configuration id — it is a
+public taxonomy identifier, not a credential, and it is deliberately not
+`httpOnly` so client components can read it.
+
+### Part-number relations
+
+`product_references` records typed relations between part numbers:
+`SUPERSEDES`, `SUPERSEDED_BY`, `ALTERNATE`, `CROSS_REFERENCE`. A row points
+either at another product we stock (`target_product_id`) or at a bare number we
+do not (`target_number`); a CHECK requires at least one. Search matches
+`target_number`, so looking up a competitor's part number finds ours (ADR-003).
+
+### Bulk import
+
+`import_jobs` holds one row per uploaded file: the parsed-and-validated rows in
+`payload`, the per-row errors in `errors`, and a status of
+`PENDING → VALIDATED → COMMITTED` (or `FAILED`). Validation writes only this
+row; the commit applies `payload` in a single transaction and flips the status,
+which is what makes a re-submitted job a no-op rather than a double import.
 
 ### Inventory
 `inventory` (one row per product) · `inventory_events` (append-only)
@@ -143,8 +195,14 @@ categories ─< products
 products ─┬─< product_images
           ├─< product_specs
           ├─── inventory (1:1) ─< inventory_events
-          └─< product_vehicle_compat >─┬─ vehicle_models >─ vehicle_brands
-                                       └─ vehicle_engines
+          ├─< product_references >─ products (self, optional)
+          └─< product_fitments >─ vehicle_configurations ─┬─ vehicle_models >─ vehicle_brands
+                                                          ├─ vehicle_generations
+                                                          ├─ vehicle_trims
+                                                          └─ vehicle_engines
+
+users ─< customer_vehicles >─ vehicle_configurations
+users ─< admin_audit_log          users ─< import_jobs
 
 carts ─< cart_items >─ products
 shipping_methods ─< shipping_rates
