@@ -1,0 +1,187 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/vazirmatn/index.css';
+
+/*
+ * Design tokens.
+ *
+ * Direction: industrial but premium. A deep steel-navy carries structure and
+ * trust; a single warm signal colour marks actions and prices. No gradients as
+ * decoration, no glass, no ambient animation — the catalogue is the content.
+ */
+@theme {
+  --font-sans: 'Vazirmatn Variable', 'Vazirmatn', system-ui, 'Segoe UI', Tahoma, sans-serif;
+  --font-mono: 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+
+  /* Steel navy — headers, structure, primary buttons */
+  --color-steel-50:  #f2f6fa;
+  --color-steel-100: #e2eaf3;
+  --color-steel-200: #c6d6e6;
+  --color-steel-300: #9bb6d1;
+  --color-steel-400: #6a8fb5;
+  --color-steel-500: #47709c;
+  --color-steel-600: #365a82;
+  --color-steel-700: #2b4869;
+  --color-steel-800: #1e3550;
+  --color-steel-900: #16273b;
+  --color-steel-950: #0d1826;
+
+  /* Signal amber — calls to action, prices, highlights */
+  --color-signal-50:  #fff7ed;
+  --color-signal-100: #ffedd5;
+  --color-signal-200: #fed7aa;
+  --color-signal-300: #fdba74;
+  --color-signal-400: #fb923c;
+  --color-signal-500: #f26f21;
+  --color-signal-600: #dd5711;
+  --color-signal-700: #b7410e;
+  --color-signal-800: #933512;
+  --color-signal-900: #772d12;
+
+  --color-ink: #14181f;
+  --color-muted: #5b6672;
+  --color-line: #e3e8ee;
+  --color-surface: #ffffff;
+  --color-canvas: #f6f8fa;
+
+  --radius-card: 0.75rem;
+
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-raised: 0 4px 6px -2px rgb(16 24 40 / 0.05), 0 12px 16px -4px rgb(16 24 40 / 0.10);
+  --shadow-pop: 0 8px 8px -4px rgb(16 24 40 / 0.04), 0 20px 24px -4px rgb(16 24 40 / 0.12);
+}
+
+@layer base {
+  html {
+    /* Persian digits everywhere the browser renders numerals itself. */
+    font-feature-settings: 'ss01';
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* Persian needs a touch more line height than Latin at the same size. */
+    line-height: 1.75;
+    /* Nothing may cause a horizontal scrollbar on mobile. */
+    overflow-x: hidden;
+  }
+
+  /* Persian headings read better slightly tighter than body copy. */
+  h1, h2, h3, h4 { line-height: 1.45; font-weight: 700; letter-spacing: 0; }
+
+  /*
+   * Part numbers, postal codes, tracking codes and phone numbers are Latin
+   * strings inside Persian sentences. `direction: ltr` with `unicode-bidi:
+   * isolate` keeps their characters in the right order and stops them from
+   * dragging surrounding Persian punctuation around.
+   */
+  .latin-id {
+    direction: ltr;
+    unicode-bidi: isolate;
+    font-family: var(--font-mono);
+    font-feature-settings: normal;
+    letter-spacing: 0.01em;
+  }
+
+  /*
+   * `direction: ltr` also flips a *block* element's default text alignment to
+   * the left, which detaches it from the right-aligned Persian text around it.
+   * Realign to the page's reading-start edge; on inline elements this is a
+   * no-op, so one rule covers both cases.
+   */
+  [dir='rtl'] .latin-id { text-align: right; }
+
+  ::selection { background-color: var(--color-signal-200); color: var(--color-steel-900); }
+
+  /* Visible, high-contrast focus for keyboard users on every interactive element. */
+  :focus-visible {
+    outline: 2px solid var(--color-steel-600);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  input, select, textarea, button { font-family: inherit; font-size: inherit; }
+
+  /* Number inputs: hide spinners; quantity uses explicit buttons instead. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button { appearance: none; margin: 0; }
+  input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+}
+
+@layer components {
+  .container-page {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+  @media (min-width: 640px) { .container-page { padding-inline: 1.5rem; } }
+  @media (min-width: 1024px) { .container-page { padding-inline: 2rem; } }
+
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .field {
+    width: 100%;
+    border: 1px solid var(--color-line);
+    border-radius: 0.5rem;
+    background-color: var(--color-surface);
+    padding: 0.625rem 0.875rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .field::placeholder { color: #9aa5b1; }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-steel-500);
+    box-shadow: 0 0 0 3px rgb(71 112 156 / 0.15);
+  }
+  .field[aria-invalid='true'] {
+    border-color: #c53030;
+    box-shadow: 0 0 0 3px rgb(197 48 48 / 0.12);
+  }
+
+  .label { display: block; font-size: 0.875rem; font-weight: 600; margin-block-end: 0.375rem; color: var(--color-steel-800); }
+  .hint  { font-size: 0.8125rem; color: var(--color-muted); margin-block-start: 0.25rem; }
+  .error-text { font-size: 0.8125rem; color: #c53030; margin-block-start: 0.25rem; font-weight: 500; }
+
+  /* Spec / data tables: dense, scannable, readable at 360px inside a scroller. */
+  .spec-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+  .spec-table th, .spec-table td { padding: 0.625rem 0.875rem; text-align: start; vertical-align: top; }
+  .spec-table tbody tr { border-block-start: 1px solid var(--color-line); }
+  .spec-table tbody tr:first-child { border-block-start: 0; }
+  .spec-table th { color: var(--color-muted); font-weight: 500; width: 45%; }
+  .spec-table td { font-weight: 600; }
+
+  /* Any wide element scrolls inside itself rather than the page. */
+  .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+@layer utilities {
+  /*
+   * Chevrons and arrows are direction-dependent glyphs. In RTL "next" points
+   * left, so mirror any icon marked with this class instead of shipping two
+   * icon sets.
+   */
+  [dir='rtl'] .flip-rtl { transform: scaleX(-1); }
+
+  .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
