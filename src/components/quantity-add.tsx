@@ -7,8 +7,8 @@ import { MAX_QUANTITY_PER_LINE } from '@/domain/inventory';
 
 /** Quantity stepper + add-to-cart, used on the product detail page. */
 export function QuantityAndAdd({
-  productId, available, disabled,
-}: { productId: string; available: number; disabled: boolean }) {
+  productId, available, disabled, titleFa,
+}: { productId: string; available: number; disabled: boolean; titleFa?: string }) {
   const [quantity, setQuantity] = useState(1);
   const max = Math.max(1, Math.min(available, MAX_QUANTITY_PER_LINE));
 
@@ -49,6 +49,7 @@ export function QuantityAndAdd({
           quantity={quantity}
           disabled={disabled}
           size="lg"
+          titleFa={titleFa}
         />
       </div>
     </div>

@@ -16,7 +16,7 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { VehicleBrandNode } from '@/application/catalog-service';
-import { Alert, Button, CarIcon } from './ui';
+import { Alert, Button, CarIcon, Spinner } from './ui';
 import { toPersianDigits } from '@/lib/fa';
 
 interface Named { id: string; nameFa: string }
@@ -196,7 +196,7 @@ export function VehicleSelector({
         </label>
 
         {(detail?.generations.length ?? 0) > 0 && (
-          <label className="block">
+          <label className="motion-rise block">
             <span className="sr-only">نسل خودرو</span>
             <select
               id={`${fieldId}-generation`}
@@ -213,7 +213,7 @@ export function VehicleSelector({
         )}
 
         {(detail?.trims.length ?? 0) > 0 && (
-          <label className="block">
+          <label className="motion-rise block">
             <span className="sr-only">تیپ خودرو</span>
             <select
               id={`${fieldId}-trim`}
@@ -278,10 +278,32 @@ export function VehicleSelector({
 
       {error && <Alert tone="error">{error}</Alert>}
 
-      <Button type="submit" variant="accent" size={compact ? 'md' : 'lg'} className="w-full" disabled={!model || saving}>
-        {saving ? 'در حال ثبت…' : (submitLabel ?? (mode === 'garage' ? 'ذخیره در گاراژ' : 'اعمال خودرو'))}
+      <Button
+        type="submit"
+        variant="accent"
+        size={compact ? 'md' : 'lg'}
+        className="w-full"
+        disabled={!model}
+        loading={saving}
+        loadingLabel="در حال ثبت…"
+      >
+        {submitLabel ?? (mode === 'garage' ? 'ذخیره در گاراژ' : 'اعمال خودرو')}
       </Button>
-      {!model && <p className="hint text-center">برای ادامه، برند و مدل خودرو را انتخاب کنید.</p>}
+
+      {/*
+        * Narrowing options are fetched per model. Saying so beats a dropdown
+        * that is briefly and inexplicably empty — "is the system working?"
+        * answered in words, and announced politely for screen readers.
+        */}
+      {loading && (
+        <p role="status" className="hint flex items-center justify-center gap-1.5">
+          <Spinner className="size-3.5" />
+          در حال خواندن تیپ‌ها و موتورهای این مدل…
+        </p>
+      )}
+      {!model && !loading && (
+        <p className="hint text-center">برای ادامه، برند و مدل خودرو را انتخاب کنید.</p>
+      )}
     </form>
   );
 }

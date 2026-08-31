@@ -264,7 +264,9 @@ export function ImportPanel({ initialJobs }: { initialJobs: Job[] }) {
             <Button
               type="button"
               variant="accent"
-              disabled={busy || preview.validRows === 0}
+              disabled={preview.validRows === 0}
+              loading={busy}
+              loadingLabel="در حال اعمال…"
               onClick={() => apply('commit')}
             >
               اعمال {toPersianDigits(preview.validRows)} ردیف معتبر

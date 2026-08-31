@@ -392,9 +392,13 @@ export async function getFacets(query: ProductQuery, db: Database = getDb()): Pr
 /** Type-ahead suggestions for the header search box. */
 export async function suggest(term: string, db: Database = getDb(), limit = 6) {
   const raw = term.trim();
-  if (raw.length < 2) return [] as { slug: string; titleFa: string; sku: string; imageUrl: string | null }[];
-  const rows = await db.execute<{ slug: string; title_fa: string; sku: string; image_url: string | null }>(sql`
-    select p.slug, p.title_fa, p.sku,
+  if (raw.length < 2) {
+    return [] as { slug: string; titleFa: string; sku: string; oemNumber: string | null; imageUrl: string | null }[];
+  }
+  const rows = await db.execute<{
+    slug: string; title_fa: string; sku: string; oem_number: string | null; image_url: string | null;
+  }>(sql`
+    select p.slug, p.title_fa, p.sku, p.oem_number,
       (select pi.url from product_images pi where pi.product_id = p.id
         order by pi.is_primary desc, pi.sort_order asc limit 1) as image_url
     from products p
@@ -412,6 +416,8 @@ export async function suggest(term: string, db: Database = getDb(), limit = 6) {
     slug: r.slug,
     titleFa: r.title_fa,
     sku: r.sku,
+    // Surfaced so the suggestion list can mark an exact part-number hit.
+    oemNumber: r.oem_number,
     imageUrl: r.image_url,
   }));
 }

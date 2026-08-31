@@ -90,7 +90,7 @@ export function GarageManager({
           {garage.map((v) => (
             <li
               key={v.id}
-              className={`card p-4 ${v.isDefault ? 'ring-2 ring-accent-600' : ''}`}
+              className={`card lift p-4 ${v.isDefault ? 'ring-2 ring-accent-600' : ''}`}
             >
               <div className="flex items-start gap-3">
                 <span
@@ -122,7 +122,7 @@ export function GarageManager({
                     type="button"
                     variant="secondary"
                     size="sm"
-                    disabled={busyId === v.id}
+                    loading={busyId === v.id}
                     onClick={() => makeDefault(v.id)}
                   >
                     انتخاب به‌عنوان خودروی فعال

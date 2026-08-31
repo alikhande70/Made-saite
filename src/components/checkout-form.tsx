@@ -346,19 +346,36 @@ export function CheckoutForm({
           </div>
         </dl>
 
+        {/*
+          * The button disables itself the instant it is pressed, so a
+          * double-click cannot become a second request. That is a courtesy,
+          * not the guarantee: the authority is the server-side cart lock in
+          * `placeOrder`, which serialises duplicate submits no matter what the
+          * client does (ADR-013). Client-side prevention alone would be
+          * defeated by a second tab, a replayed request, or a disabled script.
+          */}
         <Button
           type="submit"
           variant="accent"
           size="lg"
           className="mt-5 w-full"
-          disabled={submitting || quoting || options.length === 0}
+          disabled={quoting || options.length === 0}
+          loading={submitting}
+          loadingLabel="در حال ثبت سفارش…"
         >
-          {submitting
-            ? 'در حال ثبت سفارش…'
-            : selectedProvider?.confirmsWithoutPayment
-              ? 'ثبت نهایی سفارش'
-              : 'پرداخت و ثبت سفارش'}
+          {selectedProvider?.confirmsWithoutPayment ? 'ثبت نهایی سفارش' : 'پرداخت و ثبت سفارش'}
         </Button>
+
+        {/*
+          * Announced politely while the order is in flight. Placing an order is
+          * the one action in the shop a customer is most afraid of repeating,
+          * so silence here is the expensive kind.
+          */}
+        {submitting && (
+          <p role="status" className="hint mt-2 text-center">
+            سفارش شما در حال ثبت است؛ لطفاً صفحه را نبندید و دوباره کلیک نکنید.
+          </p>
+        )}
 
         <p className="hint mt-3 text-center">
           با ثبت سفارش، <Link href="/terms" className="font-semibold text-steel-700 underline">قوانین فروشگاه</Link> را می‌پذیرید.

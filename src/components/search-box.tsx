@@ -3,12 +3,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { SearchIcon, CloseIcon, LatinId } from './ui';
+import { SearchIcon, CloseIcon, LatinId, Spinner } from './ui';
 
 interface Suggestion {
   slug: string;
   titleFa: string;
   sku: string;
+  oemNumber: string | null;
   imageUrl: string | null;
 }
 
@@ -26,15 +27,25 @@ export function SearchBox({ initialQuery = '', autoFocus = false }: { initialQue
   const [items, setItems] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  /**
+   * `searching` vs `searched` are distinct on purpose. Without the second flag
+   * an empty result set is indistinguishable from "the request has not come
+   * back yet", and the customer is left staring at nothing wondering which.
+   */
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const term = value.trim();
     if (term.length < 2) {
       setItems([]);
+      setSearching(false);
+      setSearched(false);
       return;
     }
     const controller = new AbortController();
+    setSearching(true);
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search/suggest?q=${encodeURIComponent(term)}`, { signal: controller.signal });
@@ -42,8 +53,12 @@ export function SearchBox({ initialQuery = '', autoFocus = false }: { initialQue
         const body = (await res.json()) as { ok: boolean; data?: Suggestion[] };
         setItems(body.data ?? []);
         setActive(-1);
+        setSearched(true);
       } catch {
         /* aborted or offline — suggestions are optional */
+      } finally {
+        // An abort means a newer keystroke owns the spinner; do not clear it.
+        if (!controller.signal.aborted) setSearching(false);
       }
     }, 220);
     return () => {
@@ -137,11 +152,37 @@ export function SearchBox({ initialQuery = '', autoFocus = false }: { initialQue
         </div>
       </form>
 
+      {/*
+        * Searching and no-results are rendered, not left blank. The panel is
+        * opaque and lifted rather than frosted: it carries the part numbers a
+        * shopper is about to click, over whatever page they were on.
+        */}
+      {open && searching && items.length === 0 && (
+        <div className="motion-fade absolute inset-x-0 top-full z-40 mt-2 rounded-xl border border-line bg-white p-4 shadow-pop">
+          <p role="status" className="flex items-center gap-2 text-sm text-muted">
+            <Spinner className="size-4" />
+            در حال جست‌وجو…
+          </p>
+        </div>
+      )}
+
+      {open && !searching && searched && items.length === 0 && value.trim().length >= 2 && (
+        <div className="motion-fade absolute inset-x-0 top-full z-40 mt-2 rounded-xl border border-line bg-white p-4 shadow-pop">
+          <p role="status" className="text-sm font-semibold text-steel-900">
+            نتیجه‌ای برای «{value.trim()}» پیدا نشد.
+          </p>
+          {/* Tell them what to try next, not just that nothing matched. */}
+          <p className="hint mt-1">
+            کد فنی یا شمارهٔ OEM را کامل وارد کنید، یا نام قطعه را همراه نام خودرو جست‌وجو کنید.
+          </p>
+        </div>
+      )}
+
       {open && items.length > 0 && (
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute inset-x-0 top-full z-40 mt-2 max-h-96 overflow-y-auto rounded-xl border border-line bg-white py-1.5 shadow-pop"
+          className="motion-fade absolute inset-x-0 top-full z-40 mt-2 max-h-96 overflow-y-auto rounded-xl border border-line bg-white py-1.5 shadow-pop"
         >
           {items.map((item, i) => (
             <li key={item.slug} role="option" aria-selected={i === active}>
@@ -156,6 +197,11 @@ export function SearchBox({ initialQuery = '', autoFocus = false }: { initialQue
                   <span className="block truncate text-sm font-semibold text-steel-900">{item.titleFa}</span>
                   <LatinId className="block text-xs text-muted">{item.sku}</LatinId>
                 </span>
+                {isExactPartNumber(value, item) && (
+                  <span className="shrink-0 rounded-md bg-accent-50 px-1.5 py-0.5 text-[0.6875rem] font-bold text-accent-800">
+                    کد دقیق
+                  </span>
+                )}
               </Link>
             </li>
           ))}
@@ -168,4 +214,17 @@ export function SearchBox({ initialQuery = '', autoFocus = false }: { initialQue
       )}
     </div>
   );
+}
+
+/**
+ * True when what the customer typed *is* this product's SKU or OEM number,
+ * rather than merely matching some of its text. Compared case-insensitively
+ * and without separators, because a part number written on a box, in a
+ * catalogue and in a supplier's sheet rarely agrees on hyphens or spacing.
+ */
+function isExactPartNumber(query: string, item: Suggestion): boolean {
+  const normalise = (v: string) => v.trim().toLowerCase().replace(/[\s\-_./]/g, '');
+  const term = normalise(query);
+  if (term.length < 3) return false;
+  return normalise(item.sku) === term || (item.oemNumber ? normalise(item.oemNumber) === term : false);
 }

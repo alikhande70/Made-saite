@@ -212,6 +212,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 productId={product.id}
                 available={product.quantityAvailable}
                 disabled={outOfStock}
+                titleFa={product.titleFa}
               />
             </div>
 

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
+import { ToastProvider } from '@/components/ui/toast';
 import { getStoreProfile, siteUrl } from '@/application/settings-service';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     /* Persian-first: the document itself is fa/RTL, not a bolted-on override. */
     <html lang="fa" dir="rtl">
+      <head>
+        {/*
+          * Preloaded so the Arabic-range face is in hand before first paint.
+          * With `font-display: optional` that is what decides whether the real
+          * font is used at all on a cold cache — without the hint it often
+          * loses the race and the visitor gets the fallback for the whole view.
+          */}
+        <link
+          rel="preload"
+          href="/fonts/vazirmatn-arabic-wght-normal.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="min-h-dvh antialiased">
         <a
           href="#main"
@@ -45,11 +61,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         >
           پرش به محتوای اصلی
         </a>
-        <div className="flex min-h-dvh flex-col">
-          <SiteHeader />
-          <main id="main" className="flex-1">{children}</main>
-          <SiteFooter store={store} />
-        </div>
+        <ToastProvider>
+          <div className="flex min-h-dvh flex-col">
+            <SiteHeader />
+            <main id="main" className="flex-1">{children}</main>
+            <SiteFooter store={store} />
+          </div>
+        </ToastProvider>
       </body>
     </html>
   );

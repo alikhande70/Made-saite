@@ -141,6 +141,10 @@ ratings, reviews, availability or prices.
 | [docs/PAYMENTS.md](docs/PAYMENTS.md)         | Provider interface and what a real gateway needs |
 | [docs/SECURITY.md](docs/SECURITY.md)         | Controls, threat notes, deployment requirements |
 | [docs/TESTING.md](docs/TESTING.md)           | Test layers and how to run them |
+| [docs/WEBSITE_STANDARD.md](docs/WEBSITE_STANDARD.md) | The production quality gate: PASS/FAIL criteria across 16 areas |
+| [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md) | Current verdict against that gate, with evidence and severities |
+| [docs/AUTO_PARTS_STANDARD.md](docs/AUTO_PARTS_STANDARD.md) | Part identifiers, fitment hierarchy, the four compatibility states |
+| [docs/MOTION_SYSTEM.md](docs/MOTION_SYSTEM.md) | Motion tokens, the interaction inventory, and what was rejected |
 | [docs/DESIGN.md](docs/DESIGN.md)             | Palette, verified contrast, the selective-glass rule, RTL specifics |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md)   | Measured LCP/CLS/TTFB, bundle sizes, query plans — and what was not measured |
 | [docs/DECISIONS.md](docs/DECISIONS.md)       | Architecture decision records, with the evidence behind each |
@@ -178,6 +182,13 @@ These are deliberate boundaries of this build, not oversights:
   retry after a lost response returns `409 CART_EMPTY` rather than the original
   order details. See ADR-013 for the measured behaviour and the recommended
   design.
+- **Sandbox payments now fail closed in production.** A live deployment refuses
+  the mock gateway and refuses to default to it, so an unconfigured host cannot
+  quietly record orders as paid. Deliberate staging use requires
+  `ALLOW_SANDBOX_PAYMENTS=true`.
+- **No observability.** No error tracking, uptime monitoring or health endpoint.
+  Production failures would be invisible — see the P1 list in
+  [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md).
 - **Not deployed, not load-tested.** It runs locally against PostgreSQL and
   passes its test suite; it has never served production traffic.
 - **`notFound()` and streaming.** Real 404 statuses depend on no Suspense

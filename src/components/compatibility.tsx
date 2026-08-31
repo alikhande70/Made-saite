@@ -101,8 +101,20 @@ export function CompatibilityPanel({
       </div>
 
       <div className={`border-t p-5 ${PANEL_CLASS[result.verdict]}`}>
-        {/* role="status" so a screen reader announces the verdict after a vehicle change. */}
-        <div role="status" className="flex flex-wrap items-center gap-3">
+        {/*
+          * `role="status"` announces the verdict after a vehicle change without
+          * stealing focus. `key` on the verdict re-runs the reveal whenever the
+          * answer actually changes, so switching vehicles reads as a *new*
+          * answer rather than a static panel that quietly rewrote itself —
+          * this is the one place motion carries meaning rather than polish.
+          * Under reduced motion the reveal resolves instantly and the words,
+          * glyph and announcement are unchanged.
+          */}
+        <div
+          key={result.verdict}
+          role="status"
+          className="motion-reveal flex flex-wrap items-center gap-3"
+        >
           <VerdictChip verdict={result.verdict} className="text-sm" />
           <p className="min-w-48 flex-1 text-sm font-medium text-steel-800">
             {/* Name the fields we are actually missing rather than repeating the

@@ -33,15 +33,68 @@ const SIZES: Record<ButtonSize, string> = {
 export function buttonClass(variant: ButtonVariant = 'primary', size: ButtonSize = 'md', extra = ''): string {
   return [
     'inline-flex items-center justify-center rounded-lg font-semibold',
-    'transition-colors duration-150 disabled:cursor-not-allowed select-none',
+    'transition-colors disabled:cursor-not-allowed select-none press',
+    '[transition-duration:var(--motion-fast)]',
     VARIANTS[variant], SIZES[size], extra,
   ].join(' ');
 }
 
+/**
+ * Indeterminate activity indicator.
+ *
+ * Indeterminate on purpose: the server reports no progress for a checkout or
+ * an add-to-cart, so any percentage would be invented. A fake progress bar
+ * that stalls at 90% is worse than an honest spinner.
+ *
+ * Purely decorative to assistive technology — the surrounding control carries
+ * `aria-busy` and the status text, so a screen reader is told what is
+ * happening rather than that a shape is rotating.
+ */
+export function Spinner({ className = 'size-4' }: { className?: string }) {
+  return (
+    <svg className={`spinner ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" className="opacity-25" />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Button with a first-class pending state.
+ *
+ * `loading` disables the control, marks it `aria-busy`, and swaps in a spinner
+ * beside `loadingLabel`. Centralising it means every submit in the application
+ * answers "is the system working?" the same way, and that a control can never
+ * be pressed twice while its first press is still in flight — the client-side
+ * half of the double-submit protection whose authority lives in the cart lock
+ * (ADR-013).
+ */
 export function Button({
-  variant = 'primary', size = 'md', className = '', ...props
-}: ComponentProps<'button'> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <button {...props} className={buttonClass(variant, size, className)} />;
+  variant = 'primary', size = 'md', className = '', loading = false, loadingLabel,
+  children, disabled, ...props
+}: ComponentProps<'button'> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  loading?: boolean;
+  /** Replaces the label while loading. Omit to keep the label beside the spinner. */
+  loadingLabel?: string;
+}) {
+  return (
+    <button
+      {...props}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={buttonClass(variant, size, className)}
+    >
+      {loading && <Spinner />}
+      {loading && loadingLabel ? loadingLabel : children}
+    </button>
+  );
 }
 
 export function LinkButton({

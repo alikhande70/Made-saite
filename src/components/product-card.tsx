@@ -21,7 +21,7 @@ export function ProductCard({
   const outOfStock = product.stockStatus === 'OUT_OF_STOCK';
 
   return (
-    <article className="card group flex flex-col overflow-hidden transition-shadow hover:shadow-raised">
+    <article className="card lift group flex flex-col overflow-hidden">
       <Link href={href} className="relative block aspect-square overflow-hidden bg-steel-50">
         { }
         <img
@@ -84,6 +84,7 @@ export function ProductCard({
             available={product.quantityAvailable}
             size="sm"
             label="افزودن به سبد"
+            titleFa={product.titleFa}
           />
         </div>
       </div>

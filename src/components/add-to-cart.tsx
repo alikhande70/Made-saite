@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, CartIcon, CheckIcon } from './ui';
+import { useToast } from './ui/toast';
 import { toPersianDigits } from '@/lib/fa';
 
 /**
@@ -18,6 +19,7 @@ export function AddToCartButton({
   size = 'md',
   label = 'افزودن به سبد خرید',
   variant = 'accent',
+  titleFa,
 }: {
   productId: string;
   disabled?: boolean;
@@ -26,12 +28,15 @@ export function AddToCartButton({
   size?: 'sm' | 'md' | 'lg';
   label?: string;
   variant?: 'accent' | 'primary';
+  /** Named in the confirmation, so a listing tells you *which* part landed. */
+  titleFa?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [state, setState] = useState<'idle' | 'added' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   async function add() {
     setBusy(true);
@@ -44,17 +49,24 @@ export function AddToCartButton({
       });
       const body = (await res.json()) as { ok: boolean; message?: string };
       if (!res.ok || !body.ok) {
+        const failure = body.message ?? 'افزودن به سبد خرید انجام نشد.';
         setState('error');
-        setMessage(body.message ?? 'افزودن به سبد خرید انجام نشد.');
+        // Inline *and* toast: a stock conflict on a listing card can otherwise
+        // scroll out of view before the customer notices it.
+        setMessage(failure);
+        toast.show(failure, 'error');
         return;
       }
       setState('added');
       setMessage(null);
+      toast.show(`${titleFa ?? 'کالا'} به سبد خرید اضافه شد.`, 'success');
       startTransition(() => router.refresh());
       setTimeout(() => setState('idle'), 2500);
     } catch {
+      const offline = 'ارتباط با سرور برقرار نشد. اتصال اینترنت خود را بررسی کنید.';
       setState('error');
-      setMessage('ارتباط با سرور برقرار نشد. اتصال اینترنت خود را بررسی کنید.');
+      setMessage(offline);
+      toast.show(offline, 'error');
     } finally {
       setBusy(false);
     }
@@ -73,18 +85,18 @@ export function AddToCartButton({
       <Button
         type="button"
         onClick={add}
-        disabled={busy || pending}
+        loading={busy || pending}
+        loadingLabel="در حال افزودن…"
         variant={state === 'added' ? 'primary' : variant}
         size={size}
         className="w-full"
-        aria-live="polite"
       >
         {state === 'added' ? (
-          <>
+          // `motion-pop` marks the moment the item landed. The words carry the
+          // meaning; the movement only draws the eye to them.
+          <span className="motion-pop inline-flex items-center gap-2">
             <CheckIcon className="size-4" /> به سبد اضافه شد
-          </>
-        ) : busy || pending ? (
-          'در حال افزودن…'
+          </span>
         ) : (
           <>
             <CartIcon className="size-4" /> {label}
