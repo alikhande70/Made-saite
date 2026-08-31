@@ -153,13 +153,12 @@ jobs:
           # started.
           set -euo pipefail
 
-          # A clean project: no containers, no volumes, no database.
-          # Scoped to this compose project on purpose — `docker rm -f $(docker
-          # ps -aq)` would also destroy the workflow's own PostgreSQL service
-          # container, which the earlier steps depend on.
-          APP_IMAGE=none docker compose -f docker-compose.production.yml \
-            down -v --remove-orphans 2>/dev/null || true
-
+          # The env file comes first: `compose down` interpolates the whole
+          # file before it does anything, so without --env-file it fails on the
+          # required variables, prints to stderr, and removes nothing. That is
+          # how a stale pgdata volume survives a "clean" teardown and the next
+          # deploy meets a database with the previous password.
+          #
           # Gitignored, so the working tree stays clean and deploy.sh proceeds.
           cat > .env.production <<'ENV'
           POSTGRES_USER=madesaite
@@ -174,6 +173,14 @@ jobs:
           TRUSTED_PROXY_HOPS=1
           ENV
           mkdir -p backups
+
+          # A clean project: no containers, no volumes, no database. Scoped to
+          # this compose project on purpose — `docker rm -f $(docker ps -aq)`
+          # would also destroy the workflow's own PostgreSQL service container,
+          # which the earlier steps depend on. stderr is deliberately not
+          # discarded: a teardown that cannot run must be visible.
+          APP_IMAGE=none docker compose -f docker-compose.production.yml \
+            --env-file .env.production down -v --remove-orphans || true
 
           # The SHA is passed explicitly: actions/checkout leaves a detached
           # HEAD, so deploy.sh's `origin/$(git rev-parse --abbrev-ref HEAD)`
@@ -233,8 +240,8 @@ jobs:
       - name: Tear down the rehearsal stack
         if: always()
         run: |
-          docker compose -f docker-compose.production.yml --env-file .env.production \
-            down -v --remove-orphans 2>/dev/null || true
+          APP_IMAGE=none docker compose -f docker-compose.production.yml \
+            --env-file .env.production down -v --remove-orphans || true
           rm -f .env.production
 
       - uses: actions/upload-artifact@v4
