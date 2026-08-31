@@ -171,6 +171,7 @@ Severity: **P0** blocker · **P1** major · **P2** important · **P3** minor.
 | E8 | Immutable line snapshots | PASS | test | `checkout.test.ts` | — | — |
 | E9 | Stock ≥ reserved | PASS | CHECK + tests | schema | — | — |
 | E10 | No compatibility without evidence | PASS | 23 unit + 20 integration + E2E | `fitment.test.ts` | — | — |
+| E12 ↑↓ | **PAID order implies a settled payment** | PASS | **the ledger could contradict the order.** A retry after a failed or cancelled attempt left `order.status = PAID` with `payment.status = FAILED`, because settlement matched only `INITIATED`. Reproduced, then fixed and **enforced**: `PAID_WITHOUT_VERIFICATION` is reported and the transaction rolls back if nothing is settleable. 8 tests, verified to fail on revert | `tests/integration/orders.test.ts` | — | — |
 | E11 | **HTTP idempotency key** | **OPEN** | cart lock prevents duplicates; retry after a lost response returns `409 CART_EMPTY`. Re-evaluated for production: still P2, and two claims in the original evaluation were corrected — there is **no** customer-facing lookup by phone, and `CART_EMPTY` is **not** a named invariant, so nothing would alert on it today | ADR-013 + addendum | **P2** | ADR-013 design; escalate on first observed occurrence |
 
 ## 11. Database
@@ -207,8 +208,8 @@ Severity: **P0** blocker · **P1** major · **P2** important · **P3** minor.
 | Q8 | No brittle assertions | PASS | no animation-timing assertions | — | — |
 | I1–I5 ↑ | CI gates on every push | PASS | 19 steps green on `efa1648`, run `33389716248` — now including a production container build, a startup-gate assertion against the real image, a readiness check against a real database, and a production dependency audit | — | — |
 | Y1–Y4 | Config documented, fails closed, demo marked | PASS | `.env.example`, payment guard | — | — |
-| Y5 ↑ | Deployment rehearsed | **PARTIAL** | staging-like rehearsal performed end-to-end from a clean checkout — migrations, 32 tables, config gate refusing bad config with exit 1, Persian search, fitment verdict, order `MS-2608-NKZM645K`, tracking, stock reserved, readiness 503→200 on database loss and recovery, clean SIGTERM. The image itself is now built and exercised in CI. **Never deployed to a real host.** | **P1** | first real deploy |
-| Y6 ↑ | Rollback path | **PARTIAL** | `deploy.sh --rollback` re-tags the recorded previous image; pre-deploy dump taken before migrations; auto-rollback on a readiness or smoke failure. **Never exercised on a real host** | `scripts/deploy.sh` | P2 | rehearse (T18) |
+| Y5 ↑↓ | Deployment rehearsed | **PARTIAL** | **the previous PARTIAL was not earned.** Driving the documented entrypoint on a genuinely clean Docker host found four defects that made a first deploy impossible; see §14. It now runs clean end to end: db created → healthy → migrate container applies 32 tables → app ready → 9 smoke checks. **Still never deployed to a real host.** | **P1** | first real deploy |
+| Y6 ↑ | Rollback path | PASS | **executed**, not just written: redeploy recorded the previous image, `--rollback` returned to it, and all 9 smoke checks passed against the restored release. Gated in CI on every push | `scripts/deploy.sh` | — | — |
 | O1 | Error logging without PII | PASS | review | — | — |
 | O2 | Admin audit | PASS | `/admin/audit` | — | — |
 | O3 ↑ | Health endpoint | PASS | `/api/health` (liveness, no DB) and `/api/ready` (DB + schema, 3s timeout). Readiness verified to return 503 on database loss and 200 on recovery without a restart; neither leaks a driver message or connection string | `src/app/api/health`, `src/app/api/ready` | — | — |
@@ -220,16 +221,18 @@ Severity: **P0** blocker · **P1** major · **P2** important · **P3** minor.
 
 | # | Requirement | Status | Evidence | Sev | Remediation |
 | - | ----------- | ------ | -------- | --- | ----------- |
-| N1 | Reproducible image | PASS | multi-stage, `npm ci` from the lockfile, `GIT_SHA` baked in as `NEXT_PUBLIC_BUILD_SHA`; **built in CI**, not just written | — | — |
+| N1 ↑↓ | Reproducible image | PASS | multi-stage, `npm ci` from the lockfile. `NEXT_PUBLIC_BUILD_SHA` was set only in the build stage, so a running container reported **nothing** — the first thing the runbook tells an operator to check. Fixed and asserted in CI against the running container | — | — |
 | N2 | Runs unprivileged | PASS | non-root user 1001, `read_only: true`, `no-new-privileges`, tini for signal handling | — | — |
 | N3 | No secret in an image layer | PASS | `.dockerignore` excludes every `.env`; configuration arrives at run time | — | — |
 | N4 | Database not publicly exposed | PASS | compose publishes no port for `db`; app bound to `127.0.0.1` | — | — |
-| N5 | Migrations gate the app | PASS | one-shot container, `service_completed_successfully` | — | — |
+| N5 ↑↓ | Migrations gate the app | PASS | **the migrate container could not run at all**: Next's standalone tracer inlines drizzle-orm rather than leaving it resolvable, so the runner died on `Cannot find module`. Now shipped and asserted — CI checks the *container* created ≥30 tables | — | — |
 | N6 | Deploy is attributable to a SHA | PASS | `deploy.sh` refuses a dirty working tree | — | — |
 | N7 | Trusted proxy configured safely | PASS | hops counted from the right; a short chain resolves to `unknown` rather than to a client value | — | — |
 | N8 | Deployment architecture decided | PASS | ADR-014, three options evaluated | — | — |
 | N9 | Owner-operable documentation | PASS | `docs/LAUNCH_GUIDE_FA.md` (Persian), `docs/OPERATIONS.md`, `docs/SMOKE_TEST_PLAN.md` | — | — |
 | N10 | Automated post-deploy smoke tests | PASS | 9 non-destructive checks gate the rollback, including a real 404 and the admin redirect | — | — |
+| N17 ↑↓ | First deploy works on a clean host | PASS | **was broken four ways and nothing tested it.** Reproduced on an empty Docker project with only `./scripts/deploy.sh`; each fix verified by re-running. CI now drives the real entrypoint from nothing on every push | — | — |
+| N18 ↑↓ | Pre-deploy backup actually taken | PASS | **it never ran.** Every redeploy printed "first deployment, nothing to back up" while the database was up, and wrote no dump. The condition tested command success, not whether a container was running, and failed on APP_IMAGE interpolation. Now taken **and read back** with `pg_restore --list` before migrating | — | — |
 | N16 | E2E exercises the production server | **PARTIAL** | the Playwright harness runs `next start`, which now warns it "does not work with output: standalone". It does serve correctly — 104 E2E tests pass through full purchase journeys — but production runs `node server.js` from the standalone bundle, a different wrapper over the same build. CI's container readiness step boots the standalone server directly, so both paths are exercised, just not by the same suite | P3 | point `webServer` at the standalone server once it can be done without destabilising the harness |
 | N11 | Domain + HTTPS | **FAIL** | no domain registered, no certificate | **P1** | owner action |
 | N12 | Real payment provider | **FAIL** | sandbox only; the app refuses to start this way on a live host | **P1** | owner action, 3–10 working days |
@@ -256,9 +259,21 @@ None open. Three were found and closed across the last two phases:
 
 ### P1 — blocks a real launch
 
-Every one is now **external to the code**. Nothing in this list is waiting on
-engineering; each needs an account, a payment method, a real host, or a human
-with assistive technology.
+The previous revision of this file claimed every remaining P1 was external to
+the code. **That was wrong, and an independent review was right to reject it.**
+Two internal P1s were open at that point, and looking for them found more:
+
+- a first deploy could not work at all — four separate defects (§14, N17);
+- a PAID order could carry a FAILED payment row (§10, E12).
+
+Both are now fixed, reproduced first and verified to fail on revert. They were
+invisible from reading the code and from the CI that existed, which is the
+lesson: *nothing that had never been executed should have been recorded as
+PASS.* Y5 and Y6 in particular were marked PARTIAL on the strength of scripts
+that had been written but never run against a clean host.
+
+With those closed, the list below is external — but that claim is now made
+having been caught making it too early once.
 
 | # | Item | Why it blocks | Whose |
 | - | ---- | ------------- | ----- |
@@ -274,6 +289,15 @@ with assistive technology.
 | C15 | No penetration test | automated review is not an independent audit | external |
 | Y5 | Deployment rehearsed, not performed | see N13 | — |
 
+**Internal P1s found and closed by the review that rejected the earlier claim:**
+
+| # | Was | Now |
+| - | --- | --- |
+| N17 | First deploy impossible: migrate container could not load drizzle-orm; `--no-deps` never started the database; `APP_IMAGE` interpolation broke starting `db` alone | fixed, rehearsed clean end to end, gated in CI |
+| N18 | Pre-deploy backup silently never taken | taken and read back before migrating |
+| N1 | Running container reported no build SHA, though the runbook says to read it | carried into the runtime stage, asserted in CI |
+| E12 | `order.status = PAID` reachable with `payment.status = FAILED` | retry settles the row; invariant enforced and reported |
+
 ### P2
 **E11** (idempotency key — re-evaluated, still P2) · **P1/P2/P10** (field
 metrics: LAB measured, FIELD absent, INP unmeasurable synthetically) ·
@@ -288,7 +312,14 @@ N16 (E2E runs `next start`, production runs the standalone server)
 
 ## Production readiness
 
-**Not production ready — but the reason has changed.**
+**Not production ready.**
+
+*Revised after an independent review rejected the previous conclusion.* The
+prior version of this section said the operational readiness existed as
+artefacts and only lacked a real host. That was too generous: the artefacts
+existed, but four of them did not work, and the one thing that would have
+revealed it — running the documented entrypoint on a clean host — had not been
+done. It has now.
 
 At the last assessment six P1 items were open and the honest summary was "the
 code is in good shape; the operational readiness around it has not been
@@ -316,5 +347,11 @@ rather than at code:
 None of the three is visible from reading application code, which is the
 argument for having done this phase at all.
 
-**The honest statement is: the system is deployable and operable, and has not
-yet been deployed or operated.**
+Three further defects were found by the same exercise, on top of the two the
+review named: the pre-deploy backup never ran, the image could not report its
+own commit, and a CI assertion passed vacuously on an errored command.
+
+**The honest statement is: the system is now demonstrably deployable — a clean
+first deploy, a redeploy with a verified backup, and a rollback have all been
+executed and are gated in CI — and it has still never been deployed to a real
+host, taken a real payment, or been read by a screen reader.**
