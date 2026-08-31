@@ -184,6 +184,17 @@ export async function createProduct(input: ProductInput, actorUserId: string): P
       });
     }
 
+    /*
+     * Enqueued inside the transaction, so the notification commits with the
+     * product or not at all. An inactive product is not enqueued: it has no
+     * indexable URL yet, and telling an engine about a page that will answer
+     * 404 wastes the submission and teaches the engine to distrust the host.
+     */
+    if (input.isActive) {
+      const { notifyUrlsChanged } = await import('./search-visibility');
+      await notifyUrlsChanged([{ kind: 'product', slug: row.slug }], 'product.created', tx);
+    }
+
     return row;
   });
 }
@@ -223,6 +234,26 @@ export async function updateProduct(
 
     await writeChildren(tx, productId, input);
     await ensureInventoryRow(tx, productId);
+
+    /*
+     * A slug change makes the old URL a 404, so both are submitted: the new one
+     * so it is discovered, the old one so the engine re-crawls and drops it
+     * rather than serving a dead result for weeks. `notifyUrlsChanged` never
+     * throws, so a submission problem cannot fail an admin's save.
+     */
+    const { notifyUrlsChanged } = await import('./search-visibility');
+    const slugChanged = existing.slug !== row.slug;
+    if (input.isActive || slugChanged) {
+      await notifyUrlsChanged(
+        [
+          ...(input.isActive ? [{ kind: 'product' as const, slug: row.slug }] : []),
+          ...(slugChanged ? [{ kind: 'product' as const, slug: existing.slug }] : []),
+        ],
+        slugChanged ? 'product.slug_changed' : 'product.updated',
+        tx,
+      );
+    }
+
     return row;
   });
 }
@@ -235,6 +266,21 @@ export async function setProductActive(productId: string, isActive: boolean): Pr
     .where(eq(products.id, productId))
     .returning({ id: products.id });
   if (updated.length === 0) throw errors.notFound('کالا یافت نشد.');
+
+  // Both directions are worth submitting: activation to get the page found,
+  // deactivation so the engine re-crawls and drops a URL that now 404s.
+  const [row] = await getDb()
+    .select({ slug: products.slug })
+    .from(products)
+    .where(eq(products.id, productId))
+    .limit(1);
+  if (row) {
+    const { notifyUrlsChanged } = await import('./search-visibility');
+    await notifyUrlsChanged(
+      [{ kind: 'product', slug: row.slug }],
+      isActive ? 'product.activated' : 'product.deactivated',
+    );
+  }
 }
 
 export interface AdminProductFilter {

@@ -1,3 +1,4 @@
+import { canonicalPath } from '@/domain/search-visibility';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -11,6 +12,7 @@ import { getSelectedVehicleId } from '@/lib/session';
 import { getShippingOptions } from '@/application/shipping-service';
 import { siteUrl, getStoreProfile } from '@/application/settings-service';
 import { JsonLd } from '@/components/json-ld';
+import { breadcrumbJsonLd } from '@/lib/json-ld';
 import { ProductGallery } from '@/components/product-gallery';
 import { QuantityAndAdd } from '@/components/quantity-add';
 import { ProductRail } from '@/components/product-card';
@@ -35,7 +37,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const product = await getProductBySlug(decodeURIComponent(slug));
   if (!product) return { title: 'محصول یافت نشد', robots: { index: false, follow: false } };
 
-  const canonical = `/products/${encodeURIComponent(product.slug)}`;
+  const canonical = canonicalPath({ kind: 'product', slug: product.slug });
   const description =
     product.seoDescription ??
     product.descriptionFa?.slice(0, 300) ??
@@ -49,7 +51,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
       type: 'website',
       title: product.titleFa,
       description,
-      url: `${siteUrl()}${canonical}`,
+      url: `${siteUrl()}${canonicalPath({ kind: 'product', slug: product.slug })}`,
       images: product.images[0] ? [{ url: `${siteUrl()}${product.images[0].url}` }] : undefined,
     },
   };
@@ -100,7 +102,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     ...(product.oemNumber ? { productID: product.oemNumber } : {}),
     ...(product.brand ? { brand: { '@type': 'Brand', name: product.brand.nameFa } } : {}),
     ...(product.manufacturer ? { manufacturer: { '@type': 'Organization', name: product.manufacturer } } : {}),
-    image: product.images.map((i) => `${siteUrl()}${i.url}`),
+    // Omitted entirely when there are no images: an empty `image` array is a
+    // malformed Product, and inventing a placeholder would be fabricated data.
+    ...(product.images.length > 0
+      ? { image: product.images.map((i) => `${siteUrl()}${i.url}`) }
+      : {}),
     ...(product.weightGrams
       ? { weight: { '@type': 'QuantitativeValue', value: product.weightGrams, unitCode: 'GRM' } }
       : {}),
@@ -112,7 +118,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           : 'https://schema.org/UsedCondition',
     offers: {
       '@type': 'Offer',
-      url: `${siteUrl()}/products/${encodeURIComponent(product.slug)}`,
+      url: `${siteUrl()}${canonicalPath({ kind: 'product', slug: product.slug })}`,
       priceCurrency: 'IRR',
       // schema.org expects the national currency; Rial = Toman × 10.
       price: product.effectivePrice * 10,
@@ -123,37 +129,26 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     },
   };
 
-  const breadcrumbLd = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'خانه', item: siteUrl() },
-      ...(product.category?.parentSlug && product.category.parentNameFa
-        ? [{
-            '@type': 'ListItem', position: 2, name: product.category.parentNameFa,
-            item: `${siteUrl()}/categories/${encodeURIComponent(product.category.parentSlug)}`,
-          }]
-        : []),
-      ...(product.category
-        ? [{
-            '@type': 'ListItem',
-            position: product.category.parentSlug ? 3 : 2,
-            name: product.category.nameFa,
-            item: `${siteUrl()}/categories/${encodeURIComponent(product.category.slug)}`,
-          }]
-        : []),
-    ],
-  };
-
-  const crumbs = [
+  /*
+   * One breadcrumb trail, two renderings. The visible trail and the
+   * BreadcrumbList used to be built separately and had drifted apart — the
+   * JSON-LD omitted the «دسته‌بندی‌ها» level the page showed, and omitted the
+   * product itself. Structured data that contradicts the page is worse than
+   * none, so both now derive from this array.
+   */
+  const crumbs: { label: string; href?: string }[] = [
     { label: 'خانه', href: '/' },
     { label: 'دسته‌بندی‌ها', href: '/categories' },
     ...(product.category?.parentSlug && product.category.parentNameFa
-      ? [{ label: product.category.parentNameFa, href: `/categories/${encodeURIComponent(product.category.parentSlug)}` }]
+      ? [{ label: product.category.parentNameFa, href: canonicalPath({ kind: 'category', slug: product.category.parentSlug }) }]
       : []),
-    ...(product.category ? [{ label: product.category.nameFa, href: `/categories/${encodeURIComponent(product.category.slug)}` }] : []),
+    ...(product.category
+      ? [{ label: product.category.nameFa, href: canonicalPath({ kind: 'category', slug: product.category.slug }) }]
+      : []),
     { label: product.titleFa },
   ];
+
+  const breadcrumbLd = breadcrumbJsonLd(crumbs, siteUrl());
 
   return (
     <div className="container-page py-6">

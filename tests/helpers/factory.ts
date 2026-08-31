@@ -23,7 +23,8 @@ export async function resetDatabase(): Promise<void> {
       categories, brands,
       shipping_rates, shipping_methods,
       sessions, addresses, users,
-      store_settings, rate_limits, admin_audit_log, import_jobs
+      store_settings, rate_limits, admin_audit_log, import_jobs,
+      search_submission_events
     restart identity cascade
   `);
 }

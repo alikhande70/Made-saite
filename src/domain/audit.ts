@@ -16,7 +16,8 @@ export type AuditAction =
   | 'customer.activate' | 'customer.deactivate'
   | 'settings.update'
   | 'import.validate' | 'import.commit' | 'import.discard'
-  | 'vehicle.upsert' | 'vehicle.delete';
+  | 'vehicle.upsert' | 'vehicle.delete'
+  | 'seo.submissions.retry' | 'seo.submissions.drain';
 
 /** Persian labels, shown verbatim in the admin audit log. */
 export const AUDIT_ACTION_LABEL_FA: Record<string, string> = {
@@ -37,6 +38,8 @@ export const AUDIT_ACTION_LABEL_FA: Record<string, string> = {
   'customer.activate': 'فعال‌سازی مشتری',
   'customer.deactivate': 'مسدودسازی مشتری',
   'settings.update': 'تغییر تنظیمات فروشگاه',
+  'seo.submissions.retry': 'تلاش دوباره برای ارسال به موتور جست‌وجو',
+  'seo.submissions.drain': 'پردازش صف ارسال به موتور جست‌وجو',
   'import.validate': 'بررسی فایل ورودی',
   'import.commit': 'اعمال فایل ورودی',
   'import.discard': 'کنارگذاشتن فایل ورودی',

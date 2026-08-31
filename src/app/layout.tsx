@@ -3,12 +3,12 @@ import './globals.css';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
 import { ToastProvider } from '@/components/ui/toast';
-import { getStoreProfile, siteUrl } from '@/application/settings-service';
+import { getStoreProfileForRequest, siteUrl } from '@/application/settings-service';
 
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const store = await getStoreProfile();
+  const store = await getStoreProfileForRequest();
   return {
     metadataBase: new URL(siteUrl()),
     title: { default: store.name, template: `%s | ${store.name}` },
@@ -34,7 +34,7 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const store = await getStoreProfile();
+  const store = await getStoreProfileForRequest();
 
   return (
     /* Persian-first: the document itself is fa/RTL, not a bolted-on override. */

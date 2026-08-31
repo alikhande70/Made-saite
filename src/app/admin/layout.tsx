@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import { getCurrentUser } from '@/lib/session';
 import { getDashboardSummary } from '@/application/order-service';
 import { toPersianDigits } from '@/lib/fa';
-import { BoxIcon, CarIcon, ShieldIcon, TruckIcon, UserIcon, WrenchIcon } from '@/components/ui';
+import { BoxIcon, CarIcon, SearchIcon, ShieldIcon, TruckIcon, UserIcon, WrenchIcon } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +26,7 @@ const NAV: { href: string; label: string; icon: typeof BoxIcon }[] = [
   { href: '/admin/vehicles', label: 'پایگاه خودروها', icon: CarIcon },
   { href: '/admin/customers', label: 'مشتریان', icon: UserIcon },
   { href: '/admin/imports', label: 'درون‌ریزی گروهی', icon: BoxIcon },
+  { href: '/admin/search-visibility', label: 'دیده‌شدن در جست‌وجو', icon: SearchIcon },
   { href: '/admin/audit', label: 'گزارش فعالیت', icon: ShieldIcon },
   { href: '/admin/settings', label: 'تنظیمات فروشگاه', icon: WrenchIcon },
 ];

@@ -1,3 +1,4 @@
+import { canonicalPath } from '@/domain/search-visibility';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -26,7 +27,7 @@ export async function generateMetadata({
   return {
     title: category.seoTitle ?? category.nameFa,
     description: category.seoDescription ?? category.description ?? `خرید ${category.nameFa} با مشخصات فنی کامل.`,
-    alternates: { canonical: `/categories/${encodeURIComponent(category.slug)}` },
+    alternates: { canonical: canonicalPath({ kind: 'category', slug: category.slug }) },
     // Filtered variants of a category listing are noindex, follow (ADR-004).
     robots: listingRobots(query),
     openGraph: {

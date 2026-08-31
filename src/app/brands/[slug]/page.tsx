@@ -1,3 +1,4 @@
+import { canonicalPath } from '@/domain/search-visibility';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getBrandBySlug } from '@/application/catalog-service';
@@ -21,7 +22,7 @@ export async function generateMetadata({
   return {
     title: brand.seoTitle ?? `قطعات ${brand.nameFa}`,
     description: brand.seoDescription ?? brand.description ?? `خرید قطعات یدکی برند ${brand.nameFa}.`,
-    alternates: { canonical: `/brands/${encodeURIComponent(brand.slug)}` },
+    alternates: { canonical: canonicalPath({ kind: 'brand', slug: brand.slug }) },
     // Filtered variants of a brand listing are noindex, follow (ADR-004).
     robots: listingRobots(query),
     openGraph: {

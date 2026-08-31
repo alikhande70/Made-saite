@@ -22,7 +22,8 @@
     "test:e2e": "playwright test",
     "test:e2e:db": "tsx scripts/e2e-db.ts",
     "test:e2e:install": "playwright install chromium",
-    "test:all": "vitest run && playwright test"
+    "test:all": "vitest run && playwright test",
+    "bench:sitemap": "tsx scripts/bench-sitemap.ts"
   },
   "dependencies": {
     "@fontsource-variable/vazirmatn": "^5.3.0",

@@ -98,6 +98,13 @@ export const productReferenceTypeEnum = pgEnum('product_reference_type', [
   'CROSS_REFERENCE',  // another manufacturer's number for the same part
 ]);
 
+export const searchSubmissionStatusEnum = pgEnum('search_submission_status', [
+  'PENDING',
+  'PROCESSING',
+  'SUCCEEDED',
+  'FAILED',
+]);
+
 export const importStatusEnum = pgEnum('import_status', [
   'PENDING',
   'VALIDATED',
@@ -984,3 +991,50 @@ export const userRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   sessions: many(sessions),
 }));
+
+/* ── search submission outbox ─────────────────────────────────────────────── */
+
+/**
+ * Outbox for search-engine change notifications.
+ *
+ * An admin saving a product must not wait on — or be failed by — a third
+ * party's availability, so nothing calls a search engine from a request path.
+ * The write that changes SEO-relevant state enqueues a row here in the same
+ * transaction, and the background sweeper drains it. That makes submission
+ * crash-safe (the row survives a restart), retryable, deduplicated and
+ * observable, at the cost of one small table.
+ *
+ * `pending_url_unique` is the flood control: a partial unique index over
+ * (url, adapter) restricted to unsettled rows means an afternoon of repeated
+ * edits to one product collapses onto a single pending submission, while a
+ * later edit after that one completed correctly enqueues a fresh notification.
+ */
+export const searchSubmissionEvents = pgTable(
+  'search_submission_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Absolute, normalised canonical URL. */
+    url: text('url').notNull(),
+    /** Adapter id, e.g. `indexnow`. Not an enum: adapters are pluggable. */
+    adapter: varchar('adapter', { length: 40 }).notNull(),
+    /** What happened, for the audit trail — never used to decide behaviour. */
+    eventType: varchar('event_type', { length: 60 }).notNull(),
+    status: searchSubmissionStatusEnum('status').notNull().default('PENDING'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Truncated on write; never contains the submission key. */
+    lastError: varchar('last_error', { length: 300 }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('search_submission_due_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`status = 'PENDING'`),
+    index('search_submission_status_idx').on(t.status),
+    uniqueIndex('search_submission_pending_unique')
+      .on(t.url, t.adapter)
+      .where(sql`status in ('PENDING', 'PROCESSING')`),
+  ],
+);

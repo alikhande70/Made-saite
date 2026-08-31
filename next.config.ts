@@ -32,6 +32,21 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ['pg'],
   typedRoutes: false,
+  /*
+   * IndexNow requires its key file at the domain root as `/<key>.txt`. A root
+   * dynamic route would swallow every unmatched root path, and middleware would
+   * force an Edge bundle that cannot load `pg`. A rewrite avoids both.
+   *
+   * The 8–128 character bound is the protocol's own key length rule, and it is
+   * what keeps `/robots.txt` (six characters) from matching and being rewritten.
+   * The handler still checks the name against the configured key, so rotating
+   * the key needs no rebuild.
+   */
+  async rewrites() {
+    return [
+      { source: '/:key([A-Za-z0-9-]{8,128}).txt', destination: '/api/indexnow-key/:key' },
+    ];
+  },
   async headers() {
     return [
       {

@@ -65,18 +65,34 @@ test.describe('SEO', () => {
   });
 
   test('the sitemap lists active products and excludes private routes', async ({ request }) => {
-    const response = await request.get('/sitemap.xml');
-    expect(response.status()).toBe(200);
-    const xml = await response.text();
+    /*
+     * `/sitemap.xml` is now an index rather than a flat url set, so this walks
+     * it. The assertion is unchanged in substance and deliberately kept: every
+     * active product must still be advertised, and no private route may be.
+     */
+    const index = await request.get('/sitemap.xml');
+    expect(index.status()).toBe(200);
+    const indexXml = await index.text();
+    expect(indexXml).toContain('<sitemapindex');
 
-    expect(xml).toContain('/products');
-    expect(xml).toContain('/categories');
+    const files = [...indexXml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1]!);
+    expect(files.length).toBeGreaterThan(0);
+
+    let combined = '';
+    for (const file of files) {
+      const chunk = await request.get(new URL(file).pathname);
+      expect(chunk.status(), `${file} must be served`).toBe(200);
+      combined += await chunk.text();
+    }
+
+    expect(combined).toContain('/products');
+    expect(combined).toContain('/categories');
     for (const forbidden of ['/admin', '/account', '/checkout', '/api/']) {
-      expect(xml, `sitemap must not expose ${forbidden}`).not.toContain(forbidden);
+      expect(combined, `sitemap must not expose ${forbidden}`).not.toContain(forbidden);
     }
 
     const active = await query<{ n: string }>(`select count(*)::text as n from products where is_active`);
-    const urlCount = (xml.match(/<loc>/g) ?? []).length;
+    const urlCount = (combined.match(/<loc>/g) ?? []).length;
     expect(urlCount).toBeGreaterThanOrEqual(Number(active[0]!.n));
   });
 

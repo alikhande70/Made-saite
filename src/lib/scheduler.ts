@@ -63,6 +63,20 @@ export async function runSweep(): Promise<{ cancelled: number }> {
   await deleteExpiredSessions();
   await pruneRateLimits();
 
+  /*
+   * Search-engine notifications ride the same tick. They are drained here
+   * rather than from the admin write path so a slow or unreachable engine can
+   * never delay — or fail — saving a product. A throw is swallowed inside
+   * `processSubmissionQueue`'s adapters, but the import is guarded anyway: a
+   * broken submission subsystem must not stop stock from being released.
+   */
+  try {
+    const { processSubmissionQueue } = await import('@/application/search-visibility');
+    await processSubmissionQueue();
+  } catch (error) {
+    reportError(error, { event: 'seo.submission.failed', job: 'sweep' });
+  }
+
   // Only worth a line when it actually did something; an idle shop should not
   // write a log entry every five minutes.
   if (cancelled > 0) {

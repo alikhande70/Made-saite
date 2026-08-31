@@ -4,6 +4,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { getDb, type Database } from '@/infrastructure/db/client';
 import { storeSettings } from '@/infrastructure/db/schema';
+import { cache } from 'react';
 
 export interface StoreProfile {
   name: string;
@@ -37,6 +38,19 @@ const KEYS: Record<keyof StoreProfile, string> = {
   isDemo: 'store.isDemo',
   demoNotice: 'store.demoNotice',
 };
+
+/**
+ * Per-request memoisation.
+ *
+ * The root layout reads the store profile three times for a single page —
+ * `generateMetadata`, the layout body and the footer — and every page in the
+ * application renders that layout. React's `cache` collapses those into one
+ * query per request. It is not a cross-request cache and deliberately not one:
+ * this holds the shop's own name and contact details, not price or stock, but
+ * the request boundary is still the only lifetime that can never serve a stale
+ * value to anybody.
+ */
+export const getStoreProfileForRequest = cache(async (): Promise<StoreProfile> => getStoreProfile());
 
 export async function getStoreProfile(db: Database = getDb()): Promise<StoreProfile> {
   try {
