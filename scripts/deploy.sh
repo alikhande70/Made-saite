@@ -140,14 +140,31 @@ fi
 step "Backing up the database before migrating"
 # Taken before migrations because that is the point at which a schema change
 # becomes hard to undo.
-if compose ps db --status running >/dev/null 2>&1; then
-  compose exec -T db sh -c 'pg_dump --format=custom --compress=9 --no-owner \
-    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -f "/backups/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump"' \
+# Asked as "is there a running container", not "did a command succeed".
+# `compose ps <service> --status running` exits 0 and prints only a header when
+# nothing is running, and exits non-zero when APP_IMAGE is unset — because
+# Compose interpolates the whole file before selecting a service. Used as a
+# bare `if`, it reported "first deployment, nothing to back up" on every
+# redeploy and skipped the backup entirely, which is the one step here whose
+# absence is only discovered when a migration has already gone wrong.
+DB_CONTAINER="$(APP_IMAGE="$IMAGE" compose ps -q db 2>/dev/null || true)"
+DB_RUNNING=false
+if [ -n "$DB_CONTAINER" ]; then
+  [ "$(docker inspect -f '{{.State.Running}}' "$DB_CONTAINER" 2>/dev/null)" = "true" ] && DB_RUNNING=true
+fi
+
+if [ "$DB_RUNNING" = true ]; then
+  DUMP_NAME="pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  APP_IMAGE="$IMAGE" compose exec -T db sh -c "pg_dump --format=custom --compress=9 --no-owner \
+    -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -f \"/backups/${DUMP_NAME}\"" \
     || fail "pre-deploy backup failed; refusing to migrate without one"
-  ok "pre-deploy backup taken"
+  # A dump that was written but is unreadable is worse than none, because it is
+  # trusted. Same check scripts/backup-db.sh makes.
+  APP_IMAGE="$IMAGE" compose exec -T db sh -c "pg_restore --list \"/backups/${DUMP_NAME}\" > /dev/null" \
+    || fail "pre-deploy backup could not be read back; refusing to migrate"
+  ok "pre-deploy backup taken and verified: ${DUMP_NAME}"
 else
-  echo "  (database not yet running — first deployment, nothing to back up)"
+  echo "  (no database container running — first deployment, nothing to back up)"
 fi
 
 step "Ensuring the database is up"

@@ -180,24 +180,36 @@ jobs:
 
       - name: The deployed stack is what it claims to be
         run: |
+          # Addressed through `docker` rather than `docker compose` on purpose.
+          # Compose interpolates the entire file before selecting a service, so
+          # every `compose exec` here needs APP_IMAGE set — and a compose call
+          # that errors prints nothing, which made an earlier version of this
+          # check pass vacuously. These cannot.
           set -euo pipefail
-          compose() { docker compose -f docker-compose.production.yml --env-file .env.production "$@"; }
 
-          # The migrate container really applied the schema — not the host.
-          TABLES=$(compose exec -T db psql -U madesaite -d madesaite -tAc \
-            "select count(*) from information_schema.tables where table_schema='public'")
-          echo "tables: $TABLES"
+          # The migrate *container* applied the schema. Not the host, not a
+          # previous job: this database was created by this deploy.
+          TABLES=$(docker exec madesaite-db-1 psql -U madesaite -d madesaite -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'" | tr -d '[:space:]')
+          echo "tables: ${TABLES:-<none>}"
+          case "$TABLES" in ''|*[!0-9]*) echo "::error::could not read the table count"; exit 1 ;; esac
           [ "$TABLES" -ge 30 ] || { echo "::error::migrations did not run in the container"; exit 1; }
 
-          # The running container can name the commit it was built from; the
-          # operations runbook tells operators to read exactly this.
-          SHA=$(compose exec -T app printenv NEXT_PUBLIC_BUILD_SHA | tr -d '\r\n')
-          echo "build sha: $SHA"
-          [ "$SHA" = "${{ github.sha }}" ] || { echo "::error::image does not report its commit ($SHA)"; exit 1; }
+          # The running container can name the commit it was built from. The
+          # operations runbook tells operators to read exactly this, and it
+          # returned an empty string until the build arg was carried into the
+          # runtime stage.
+          SHA=$(docker exec madesaite-app-1 printenv NEXT_PUBLIC_BUILD_SHA | tr -d '[:space:]')
+          echo "build sha: ${SHA:-<empty>}"
+          [ "$SHA" = "${{ github.sha }}" ] \
+            || { echo "::error::image reports commit '${SHA:-<empty>}', expected ${{ github.sha }}"; exit 1; }
 
           # PostgreSQL must not be reachable from outside the compose network.
-          PORTS=$(compose ps --format json db | grep -o '"PublishedPort":[0-9]*' | grep -v ':0' || true)
-          [ -z "$PORTS" ] || { echo "::error::the database publishes a port: $PORTS"; exit 1; }
+          PUBLISHED=$(docker inspect -f \
+            '{{range $p, $conf := .NetworkSettings.Ports}}{{if $conf}}{{$p}} {{end}}{{end}}' madesaite-db-1)
+          [ -z "$PUBLISHED" ] \
+            || { echo "::error::the database publishes host ports: $PUBLISHED"; exit 1; }
+          echo "database publishes no host port"
 
       - name: Rollback returns to the previous release
         run: |
