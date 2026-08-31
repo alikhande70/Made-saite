@@ -224,18 +224,38 @@ jobs:
       - name: Rollback returns to the previous release
         run: |
           # A rollback path that has never been executed is a hope, not a path.
+          #
+          # The two releases must be genuinely different images, or this proves
+          # only that the script runs: deploying the same commit twice makes
+          # the rollback a no-op tag swap that would pass even if it swapped
+          # nothing. So the currently-running image is retagged as a distinct
+          # "previous release", and the assertion is that the application
+          # container actually goes back to it.
           set -euo pipefail
-          PREVIOUS=$(cat .deploy/current-image)
+          CURRENT=$(cat .deploy/current-image)
+          PREVIOUS="madesaite:previous-release-probe"
+          docker tag "$CURRENT" "$PREVIOUS"
+          echo "$PREVIOUS" > .deploy/current-image
 
-          # Deploy the same commit again so a previous image is recorded, then
-          # roll back to it and prove the stack still serves.
+          # Deploy over it, so $PREVIOUS is what deploy.sh records to roll back
+          # to, and confirm the running container really is the new one.
           APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
             ./scripts/deploy.sh "${{ github.sha }}"
+          RUNNING=$(docker inspect madesaite-app-1 --format '{{.Config.Image}}')
+          [ "$RUNNING" = "$CURRENT" ] \
+            || { echo "::error::deploy left $RUNNING running, expected $CURRENT"; exit 1; }
+
           APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
             ./scripts/deploy.sh --rollback
 
+          # The point of the whole step: the running image changed back.
+          RUNNING=$(docker inspect madesaite-app-1 --format '{{.Config.Image}}')
+          [ "$RUNNING" = "$PREVIOUS" ] \
+            || { echo "::error::rollback left $RUNNING running, expected $PREVIOUS"; exit 1; }
+          echo "  ✔ application rolled back to $PREVIOUS"
+
           curl -fsS http://127.0.0.1:3500/api/ready
-          echo "rolled back to $PREVIOUS and still ready"
+          echo "  ✔ still ready after rollback"
 
       - name: Tear down the rehearsal stack
         if: always()
