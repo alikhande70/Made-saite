@@ -173,6 +173,11 @@ These are deliberate boundaries of this build, not oversights:
   need a dedicated tax module.
 - **Single-currency.** Amounts are integer **Toman**; there is no multi-currency
   support.
+- **No HTTP-level idempotency key on checkout.** A retried submit cannot create
+  a duplicate order — the cart lock guarantees that, and it is tested — but a
+  retry after a lost response returns `409 CART_EMPTY` rather than the original
+  order details. See ADR-013 for the measured behaviour and the recommended
+  design.
 - **Not deployed, not load-tested.** It runs locally against PostgreSQL and
   passes its test suite; it has never served production traffic.
 - **`notFound()` and streaming.** Real 404 statuses depend on no Suspense

@@ -282,3 +282,103 @@ table and a redundant `vehicle_model_id` column on `vehicle_configurations` per
 dimension. Worth doing if this table ever accepts writes from outside the
 service; today the service is the only writer, and the check is covered by tests
 at both the service and HTTP boundaries.
+
+---
+
+## ADR-012 — The E2E database is prepared by the web server's own command
+
+**Status:** accepted
+
+**Question.** Where does the end-to-end database get created?
+
+**Evidence.** It was created in Playwright's `globalSetup`, and the suite passed
+on every developer machine and failed on CI with
+`Timed out waiting 120000ms from config.webServer`.
+
+Reproduced by dropping `madesaite_e2e` locally, which is the state of a fresh CI
+Postgres service container:
+
+1. Playwright starts `webServer` and polls its `url` for readiness.
+2. `url` is the home page, which is `force-dynamic` and queries the database.
+3. The database does not exist, so the page throws and Next answers **HTTP 500**.
+4. The readiness probe does not accept 500. It polls until `webServer.timeout`
+   and aborts the run.
+5. `globalSetup` — which creates the database — is downstream of that gate, so
+   it never runs. Verified: the database still did not exist after the run.
+
+A deadlock, not a flake. It could only ever manifest where the database had
+never existed, which is why local runs, with a database left over from the
+previous run, passed indefinitely.
+
+**Decision.** Move create + migrate + seed into `scripts/e2e-db.ts` and invoke
+it from `webServer.command` as `npm run test:e2e:db && npm run start`. Shell
+`&&` is the ordering guarantee: the server cannot start unless the database is
+ready. `globalSetup` becomes a verifier that fails with one explanatory line.
+`webServer.timeout` rises to 240 s to cover the preparation as well as the boot.
+
+**Alternatives rejected.**
+- *A database-independent `/api/health` endpoint as the readiness probe.* It
+  would let the server come up before the database exists, which relies on the
+  app tolerating a missing database at boot and on connection pools recovering
+  afterwards. It also weakens the probe: readiness would mean "the process is
+  listening" rather than "the app can render a page".
+- *A separate CI step before `npm run test:e2e`.* Fixes CI and leaves a local
+  clean checkout broken in exactly the same way.
+
+**Consequences.** The database is rebuilt on every run rather than reused, which
+is slower by a few seconds and correct — each run starts from a known state. The
+ordering is asserted statically in `tests/unit/e2e-harness.test.ts`, which fails
+if the bootstrap moves back into `globalSetup`.
+
+---
+
+## ADR-013 — Checkout idempotency: cart lock now, an idempotency key later (P2)
+
+**Status:** accepted for the current scope; the idempotency key is a recorded
+recommendation, not implemented
+
+**Question.** Is the cart lock enough to make `POST /api/checkout` idempotent?
+
+**Evidence.** Measured, not assumed. With the cart lock in place a retried
+submit of an already-placed cart produces:
+
+```
+FIRST  -> {"orderNumber":"MS-2608-YXBEMJMF","hasToken":true}
+RETRY  -> {"code":"CART_EMPTY","status":409,"message":"سبد خرید شما خالی است."}
+ORDERS -> 1
+```
+
+Exactly one order exists in every case tested — two concurrent submits, eight
+concurrent submits, and a sequential resubmit. **No duplicate-order defect
+remains**, so this is not a correctness gap.
+
+What remains is a *response-loss* gap. If the order commits and the response is
+lost in flight — a dropped connection, a client-side retry wrapper, a closed
+laptop — the retry receives `409 CART_EMPTY`. The order exists and stock is
+correctly reserved once, but the caller is told something that reads like a
+failure and does not receive `orderId`, `trackingToken` or `redirectUrl`. For a
+**guest** that matters more than it first appears: the tracking token is the
+only handle on that order, and this build sends no email, so a lost response
+means a lost order from the customer's point of view even though the shop has
+it.
+
+**Decision.** Ship the cart lock. Record the idempotency key as **P2**.
+
+**Recommended design, when it is taken up.**
+- The client generates a UUID per checkout *attempt* (not per retry) and sends
+  it as `Idempotency-Key`.
+- A `checkout_attempts` row stores `(key, cart_identity_hash, order_id,
+  response_json, created_at)` with a unique index on the key, written inside the
+  same transaction that creates the order.
+- A replay with a known key returns the stored response verbatim — the original
+  `orderId`, `trackingToken` and `redirectUrl` — instead of `CART_EMPTY`.
+- A key seen with a *different* cart identity is a conflict, not a replay, and
+  must be rejected: otherwise the key becomes a way to read another customer's
+  order result.
+- Rows expire on the same clock as the payment reservation TTL.
+
+**Why P2 and not P1.** It converts an already-safe failure into a good user
+experience; it does not prevent a defect. The money-and-stock invariants are
+held by the cart lock and by the inventory reservation, both of which are
+directly tested. Doing it properly touches the checkout transaction, so it wants
+its own change rather than being bolted onto a CI fix.

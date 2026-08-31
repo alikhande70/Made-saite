@@ -24,10 +24,30 @@ Tests never touch development data.
 - Vitest creates and migrates **`madesaite_test`** once per run
   (`tests/global-setup.ts`) and truncates every table between test cases.
   `fileParallelism` is off because the files share that one database.
-- Playwright creates, migrates and **seeds `madesaite_e2e`**
-  (`tests/e2e/global-setup.ts`), then runs against a production build on port
-  3100. Seeding with the real demo catalogue means E2E exercises genuine Persian
-  data rather than synthetic stubs.
+- Playwright creates, migrates and **seeds `madesaite_e2e`** via
+  `scripts/e2e-db.ts`, then runs against a production build on port 3100.
+  Seeding with the real demo catalogue means E2E exercises genuine Persian data
+  rather than synthetic stubs.
+
+  **The bootstrap runs inside `webServer.command`, not in `globalSetup`, and
+  that placement is load-bearing.** Playwright starts the web server and waits
+  for its URL to answer *before* it runs `globalSetup`. Every storefront page is
+  `force-dynamic` and queries the database on every request, so on a machine
+  where `madesaite_e2e` has never existed a globalSetup-based bootstrap can
+  never run: the readiness probe receives HTTP 500 until the webServer timeout
+  fires and aborts the suite, and the code that would have created the database
+  is downstream of that gate. Chaining the preparation into the server's own
+  command (`npm run test:e2e:db && npm run start`) makes the ordering a shell
+  guarantee rather than a lifecycle assumption.
+
+  This defect is invisible on a developer machine, where the database survives
+  from the previous run, and deterministic on a fresh CI runner — which is
+  exactly how it reached CI green-locally/red-remotely. `globalSetup` now only
+  *verifies* readiness and fails with one explanatory line, and
+  `tests/unit/e2e-harness.test.ts` asserts the ordering statically so it cannot
+  drift back.
+
+  To prepare the database by hand: `npm run test:e2e:db`.
 
 ## Notable cases
 

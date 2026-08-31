@@ -20,6 +20,7 @@
     "test:integration": "vitest run tests/integration tests/api",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:db": "tsx scripts/e2e-db.ts",
     "test:e2e:install": "playwright install chromium",
     "test:all": "vitest run && playwright test"
   },

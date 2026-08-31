@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 import { config as loadEnv } from 'dotenv';
+import { e2eDatabaseUrl } from './scripts/e2e-db';
 
 loadEnv({ path: '.env.local' });
 loadEnv({ path: '.env' });
+
+export { e2eDatabaseUrl };
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
@@ -47,10 +50,19 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run start -- --port ${PORT}`,
+    /*
+     * The database is prepared *in the server's own command*, not in
+     * `globalSetup`. Playwright waits for this server to answer before it runs
+     * globalSetup, and every page queries the database — so on a machine where
+     * the E2E database has never existed, a globalSetup-based bootstrap can
+     * never run: the readiness probe 500s until the timeout fires. Chaining it
+     * here makes the ordering a shell guarantee. See scripts/e2e-db.ts.
+     */
+    command: `npm run test:e2e:db && npm run start -- --port ${PORT}`,
     url: baseURL,
     reuseExistingServer: false,
-    timeout: 120_000,
+    // Covers create + migrate + seed as well as the server boot.
+    timeout: 240_000,
     env: {
       DATABASE_URL: e2eDatabaseUrl(),
       // SITE_URL is read at runtime; NEXT_PUBLIC_* would be baked in at build.
@@ -63,9 +75,3 @@ export default defineConfig({
     },
   },
 });
-
-export function e2eDatabaseUrl(): string {
-  const url = new URL(process.env.DATABASE_URL ?? 'postgresql://postgres@127.0.0.1:5432/madesaite');
-  url.pathname = `/${process.env.E2E_DB_NAME ?? 'madesaite_e2e'}`;
-  return url.toString();
-}

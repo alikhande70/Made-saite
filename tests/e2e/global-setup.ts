@@ -1,42 +1,24 @@
 /**
- * Creates and seeds the dedicated E2E database before the suite runs.
- * The seed is the same demo dataset the storefront ships with, so E2E exercises
- * realistic Persian data rather than synthetic stubs.
+ * Verifies the end-to-end database is ready. It no longer creates it.
+ *
+ * Creation moved to `scripts/e2e-db.ts`, invoked from Playwright's
+ * `webServer.command`, because Playwright starts the web server *before*
+ * globalSetup: a bootstrap here could not run on a machine where the database
+ * had never existed, since the server's readiness probe would 500 until the
+ * webServer timeout aborted the whole run.
+ *
+ * What remains is a guard. If the database is somehow missing or unseeded, the
+ * suite should say so in one line rather than fail later as a pile of
+ * unexplained assertion errors.
  */
-import { execFileSync } from 'node:child_process';
-import { Client, Pool } from 'pg';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { config as loadEnv } from 'dotenv';
-
-loadEnv({ path: '.env.local' });
-loadEnv({ path: '.env' });
-
-const DB_NAME = process.env.E2E_DB_NAME ?? 'madesaite_e2e';
-
-function url(database: string): string {
-  const parsed = new URL(process.env.DATABASE_URL ?? 'postgresql://postgres@127.0.0.1:5432/madesaite');
-  parsed.pathname = `/${database}`;
-  return parsed.toString();
-}
+import { E2E_DB_NAME, e2eDatabaseIsReady } from '../../scripts/e2e-db';
 
 export default async function globalSetup(): Promise<void> {
-  const admin = new Client({ connectionString: url('postgres') });
-  await admin.connect();
-  await admin.query(
-    `select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()`,
-    [DB_NAME],
+  if (await e2eDatabaseIsReady()) return;
+
+  throw new Error(
+    `The end-to-end database "${E2E_DB_NAME}" is missing or has no seeded products.\n` +
+    'It is normally created by `npm run test:e2e:db`, which Playwright runs as part of\n' +
+    'webServer.command. Run that command directly to see why it failed.',
   );
-  await admin.query(`drop database if exists ${DB_NAME}`);
-  await admin.query(`create database ${DB_NAME}`);
-  await admin.end();
-
-  const pool = new Pool({ connectionString: url(DB_NAME) });
-  await migrate(drizzle(pool), { migrationsFolder: './src/infrastructure/db/migrations' });
-  await pool.end();
-
-  execFileSync('npx', ['tsx', 'scripts/seed.ts'], {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: url(DB_NAME) },
-  });
 }
