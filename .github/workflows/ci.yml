@@ -87,6 +87,85 @@ jobs:
       - run: npm run test:e2e
         name: End-to-end tests
 
+      - name: Production dependencies carry no high-severity advisory
+        run: |
+          # Scoped to --omit=dev on purpose: the remaining moderate advisories
+          # are all in the drizzle-kit -> esbuild chain, which is a local dev
+          # server only and never reaches an image or a deployment. Anything
+          # high or critical that a shipped dependency introduces fails here.
+          npm audit --omit=dev --audit-level=high
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Production container image builds
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: madesaite:ci
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container refuses an unsafe production configuration
+        run: |
+          # The startup gate is the last thing standing between a typo in an
+          # env file and a live shop that records orders as paid without
+          # taking money. It is only trustworthy if it is exercised against
+          # the real image, so assert the container exits non-zero and names
+          # both faults. A zero exit here means the gate did not fire.
+          set +e
+          OUTPUT=$(docker run --rm \
+            -e NODE_ENV=production \
+            -e SITE_URL=https://madesaite.example \
+            -e PAYMENT_PROVIDER=mock \
+            -e AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000 \
+            -e DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/made_saite_test \
+            madesaite:ci 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          echo "container exit status: $STATUS"
+          if [ "$STATUS" -eq 0 ]; then
+            echo "::error::The production image booted with a mock payment provider and a test database."
+            exit 1
+          fi
+          echo "$OUTPUT" | grep -q 'PAYMENT_PROVIDER' \
+            || { echo "::error::The mock payment provider was not reported."; exit 1; }
+          echo "$OUTPUT" | grep -q 'test or development database' \
+            || { echo "::error::The test database was not reported."; exit 1; }
+
+      - name: Container serves readiness against a real database
+        run: |
+          # Proves the image can actually boot and reach Postgres, so the
+          # config gate above cannot pass merely by refusing everything.
+          docker run -d --name madesaite-smoke --network host \
+            -e NODE_ENV=production \
+            -e SITE_URL=http://localhost:3100 \
+            -e PAYMENT_PROVIDER=mock \
+            -e ALLOW_SANDBOX_PAYMENTS=true \
+            -e AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000 \
+            -e MOCK_GATEWAY_SECRET=ci_only_gateway_secret_0000 \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e PORT=3100 \
+            madesaite:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3100/api/ready > /tmp/ready.json 2>/dev/null; then
+              echo "ready after ${i}s: $(cat /tmp/ready.json)"
+              curl -fsS http://127.0.0.1:3100/api/health
+              docker rm -f madesaite-smoke > /dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The container never became ready."
+          docker logs madesaite-smoke || true
+          docker rm -f madesaite-smoke > /dev/null || true
+          exit 1
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
