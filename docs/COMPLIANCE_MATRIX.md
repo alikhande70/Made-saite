@@ -230,6 +230,7 @@ Severity: **P0** blocker · **P1** major · **P2** important · **P3** minor.
 | N8 | Deployment architecture decided | PASS | ADR-014, three options evaluated | — | — |
 | N9 | Owner-operable documentation | PASS | `docs/LAUNCH_GUIDE_FA.md` (Persian), `docs/OPERATIONS.md`, `docs/SMOKE_TEST_PLAN.md` | — | — |
 | N10 | Automated post-deploy smoke tests | PASS | 9 non-destructive checks gate the rollback, including a real 404 and the admin redirect | — | — |
+| N16 | E2E exercises the production server | **PARTIAL** | the Playwright harness runs `next start`, which now warns it "does not work with output: standalone". It does serve correctly — 104 E2E tests pass through full purchase journeys — but production runs `node server.js` from the standalone bundle, a different wrapper over the same build. CI's container readiness step boots the standalone server directly, so both paths are exercised, just not by the same suite | P3 | point `webServer` at the standalone server once it can be done without destabilising the harness |
 | N11 | Domain + HTTPS | **FAIL** | no domain registered, no certificate | **P1** | owner action |
 | N12 | Real payment provider | **FAIL** | sandbox only; the app refuses to start this way on a live host | **P1** | owner action, 3–10 working days |
 | N13 | Production deployment | **FAIL** | never deployed | **P1** | after N11 + N12 |
@@ -280,7 +281,8 @@ metrics: LAB measured, FIELD absent, INP unmeasurable synthetically) ·
 (invariants named, alerting not wired)
 
 ### P3
-H6 (heading-order assertion) · U3 (border contrast) · L6 (cart without JS)
+H6 (heading-order assertion) · U3 (border contrast) · L6 (cart without JS) ·
+N16 (E2E runs `next start`, production runs the standalone server)
 
 ---
 
