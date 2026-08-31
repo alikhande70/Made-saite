@@ -154,8 +154,11 @@ jobs:
           set -euo pipefail
 
           # A clean project: no containers, no volumes, no database.
-          docker rm -f $(docker ps -aq) 2>/dev/null || true
-          docker compose -f docker-compose.production.yml down -v --remove-orphans 2>/dev/null || true
+          # Scoped to this compose project on purpose — `docker rm -f $(docker
+          # ps -aq)` would also destroy the workflow's own PostgreSQL service
+          # container, which the earlier steps depend on.
+          APP_IMAGE=none docker compose -f docker-compose.production.yml \
+            down -v --remove-orphans 2>/dev/null || true
 
           # Gitignored, so the working tree stays clean and deploy.sh proceeds.
           cat > .env.production <<'ENV'

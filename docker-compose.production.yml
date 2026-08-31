@@ -29,11 +29,16 @@ services:
     # No `ports:` mapping on purpose. The database is reachable only on the
     # internal network; exposing 5432 to the internet is how these get found.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
+      # -h 127.0.0.1 checks the TCP path clients actually use. Without it
+      # pg_isready falls back to the local unix socket, which the temporary
+      # server postgres runs during initdb also answers on — a weaker check
+      # than what `up --wait db` is being asked to guarantee before migrations
+      # run against it.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 20s
+      retries: 20
+      start_period: 30s
     networks: [internal]
 
   # One-shot. Applies migrations, then exits 0. The app waits for it to complete
