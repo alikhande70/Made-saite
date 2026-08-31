@@ -24,6 +24,21 @@ const PAGES: [string, string][] = [
   ['/faq', 'پرسش‌های پرتکرار'],
 ];
 
+/**
+ * The breakpoint sweep. 360/390/430 are the phone widths Iranian traffic
+ * actually arrives on, 768 and 1024 are the tablet boundaries either side of
+ * the `lg:` layout switch, and 1440 is where the page must stop growing rather
+ * than stretching lines past a readable measure.
+ */
+const BREAKPOINTS: [number, number, string][] = [
+  [360, 780, 'phone-small'],
+  [390, 844, 'phone'],
+  [430, 932, 'phone-large'],
+  [768, 1024, 'tablet'],
+  [1024, 800, 'tablet-landscape'],
+  [1440, 900, 'desktop'],
+];
+
 /** Reports the widest element that pushes the page past the viewport. */
 async function horizontalOverflow(page: Page) {
   return page.evaluate(() => {
@@ -91,6 +106,70 @@ test.describe('RTL layout', () => {
     const width = page.viewportSize()!.width;
     // In RTL the drawer's inline-start edge is the right side of the screen.
     expect(box!.x + box!.width).toBeGreaterThan(width - 2);
+  });
+
+  test('no page overflows horizontally at any supported width', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-chromium', 'viewport is set explicitly');
+
+    const rows = await query<{ slug: string }>(`select slug from products where is_active limit 1`);
+    const landing = await query<{ category: string; model: string }>(`
+      select c.slug as category, vm.slug as model
+        from products p
+        join categories c on c.id = p.category_id and c.is_active
+        join product_fitments pf on pf.product_id = p.id and pf.fitment_type <> 'NOT_COMPATIBLE'
+        join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+        join vehicle_models vm on vm.id = vc.vehicle_model_id
+       where p.is_active group by 1, 2 limit 1`);
+
+    const paths = [
+      '/',
+      '/products',
+      '/vehicles',
+      `/products/${encodeURIComponent(rows[0]!.slug)}`,
+      ...(landing.length > 0 ? [`/parts/${landing[0]!.category}/${landing[0]!.model}`] : []),
+      '/cart',
+      '/checkout',
+      '/login',
+    ];
+
+    for (const [width, height, name] of BREAKPOINTS) {
+      await page.setViewportSize({ width, height });
+      for (const path of paths) {
+        await page.goto(path);
+        const overflow = await horizontalOverflow(page);
+        expect(overflow, `${path} overflows at ${width}px (${name})`).toBeNull();
+      }
+    }
+  });
+
+  test('primary actions keep a touch-sized target on a phone', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-chromium', 'viewport is set explicitly');
+    await page.setViewportSize({ width: 360, height: 780 });
+
+    const rows = await query<{ slug: string }>(
+      `select p.slug from products p join inventory i on i.product_id = p.id
+        where p.is_active and i.quantity_on_hand - i.quantity_reserved > 0 limit 1`,
+    );
+    await page.goto(`/products/${encodeURIComponent(rows[0]!.slug)}`);
+
+    const addToCart = page.getByRole('button', { name: /افزودن به سبد/ }).first();
+    const box = await addToCart.boundingBox();
+    // 44px is the smallest reliably tappable target.
+    expect(box!.height, 'add-to-cart must stay tappable at 360px').toBeGreaterThanOrEqual(44);
+  });
+
+  test('the compatibility module reads correctly at phone width', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-chromium', 'viewport is set explicitly');
+    await page.setViewportSize({ width: 360, height: 780 });
+
+    const rows = await query<{ slug: string }>(`select slug from products where is_active limit 1`);
+    await page.goto(`/products/${encodeURIComponent(rows[0]!.slug)}`);
+
+    const panel = page.getByRole('region', { name: 'آیا این قطعه مناسب خودروی شماست؟' });
+    await expect(panel).toBeVisible();
+    const box = await panel.boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(360);
+    expect(await horizontalOverflow(page)).toBeNull();
   });
 
   test('the product page is usable at 360px', async ({ page }, testInfo) => {

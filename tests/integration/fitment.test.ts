@@ -55,6 +55,35 @@ describe('vehicle configurations', () => {
     expect(new Set(ids).size).toBe(1);
   });
 
+  it('refuses a model that does not exist, rather than leaking a constraint error', async () => {
+    await expect(
+      getOrCreateConfiguration({ vehicleModelId: '11111111-1111-1111-1111-111111111111' }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('refuses a trim or engine belonging to a different model', async () => {
+    const a = await createVehicle();
+    const b = await createVehicle();
+    const trimOfB = await createTrim(b.model.id, 'OTHER', 'تیپ دیگر');
+
+    /*
+     * Each narrowing column has its own foreign key, so the database is happy
+     * to pair one model with another model's engine. Only this check stops a
+     * configuration describing a car that does not exist.
+     */
+    await expect(
+      getOrCreateConfiguration({ vehicleModelId: a.model.id, vehicleEngineId: b.engine.id }),
+    ).rejects.toMatchObject({ status: 422 });
+    await expect(
+      getOrCreateConfiguration({ vehicleModelId: a.model.id, vehicleTrimId: trimOfB.id }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    // The matching pair still works.
+    await expect(
+      getOrCreateConfiguration({ vehicleModelId: b.model.id, vehicleEngineId: b.engine.id }),
+    ).resolves.toBeTruthy();
+  });
+
   it('resolves a configuration to readable Persian names', async () => {
     const { model, engine } = await createVehicle();
     const id = await getOrCreateConfiguration({ vehicleModelId: model.id, vehicleEngineId: engine.id });

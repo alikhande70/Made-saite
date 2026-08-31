@@ -58,6 +58,61 @@ function toSpec(input: ConfigurationInput): ConfigurationSpec {
  * NULLs never compare equal in a plain unique index) to stay race-safe: two
  * concurrent callers converge on one row instead of creating duplicates.
  */
+/**
+ * Rejects a configuration that does not describe a real car.
+ *
+ * Two failures this catches, both of which the plain foreign keys do not:
+ *
+ *  - an unknown model id, which would otherwise surface as a raw constraint
+ *    violation and a 500 rather than a 404;
+ *  - a generation, trim or engine that belongs to a *different* model. Each of
+ *    those columns references its own table, so the database is perfectly happy
+ *    to pair a پژو ۲۰۶ with a پراید engine — and the resulting configuration
+ *    would then carry fitment data about a car that does not exist.
+ */
+async function assertCoherentVehicle(spec: ConfigurationSpec, db: Database): Promise<void> {
+  const [model] = await db
+    .select({ id: vehicleModels.id })
+    .from(vehicleModels)
+    .where(and(eq(vehicleModels.id, spec.modelId), eq(vehicleModels.isActive, true)))
+    .limit(1);
+  if (!model) throw errors.notFound('مدل خودرو یافت نشد.');
+
+  const checks: { id: string; label: string; ok: () => Promise<boolean> }[] = [];
+
+  if (spec.generationId) {
+    const id = spec.generationId;
+    checks.push({
+      id, label: 'نسل',
+      ok: async () => (await db.select({ id: vehicleGenerations.id }).from(vehicleGenerations)
+        .where(and(eq(vehicleGenerations.id, id), eq(vehicleGenerations.vehicleModelId, spec.modelId)))
+        .limit(1)).length > 0,
+    });
+  }
+  if (spec.trimId) {
+    const id = spec.trimId;
+    checks.push({
+      id, label: 'تیپ',
+      ok: async () => (await db.select({ id: vehicleTrims.id }).from(vehicleTrims)
+        .where(and(eq(vehicleTrims.id, id), eq(vehicleTrims.vehicleModelId, spec.modelId)))
+        .limit(1)).length > 0,
+    });
+  }
+  if (spec.engineId) {
+    const id = spec.engineId;
+    checks.push({
+      id, label: 'موتور',
+      ok: async () => (await db.select({ id: vehicleEngines.id }).from(vehicleEngines)
+        .where(and(eq(vehicleEngines.id, id), eq(vehicleEngines.vehicleModelId, spec.modelId)))
+        .limit(1)).length > 0,
+    });
+  }
+
+  const results = await Promise.all(checks.map(async (c) => ({ label: c.label, ok: await c.ok() })));
+  const bad = results.find((r) => !r.ok);
+  if (bad) throw errors.validation(`${bad.label} انتخاب‌شده به این مدل خودرو تعلق ندارد.`);
+}
+
 export async function getOrCreateConfiguration(
   input: ConfigurationInput,
   db: Database = getDb(),
@@ -66,6 +121,7 @@ export async function getOrCreateConfiguration(
   if (spec.yearFrom !== null && spec.yearTo !== null && spec.yearFrom > spec.yearTo) {
     throw errors.validation('سال شروع نمی‌تواند بزرگ‌تر از سال پایان باشد.');
   }
+  await assertCoherentVehicle(spec, db);
 
   const values = {
     modelId: spec.modelId,

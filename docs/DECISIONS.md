@@ -180,3 +180,105 @@ default whenever no fitment record covers the configuration, and `INCOMPATIBLE`
 is asserted **only** from an explicit `NOT_COMPATIBLE` fitment row. The UI states
 which vehicle the answer is about and never implies certainty the data does not
 support.
+
+---
+
+## ADR-009 — Bulk import is two-phase with an all-or-nothing commit
+
+**Status:** accepted
+
+**Question.** How does a supplier price list get into the catalogue?
+
+**Evidence.** Automotive supplier files are large and reliably messy: Persian
+digits in price columns, `٬` thousands separators, `تماس بگیرید` where a number
+belongs, brand names that do not match the store's spelling, and vehicle codes
+for models the store does not carry. Two failure modes matter more than
+throughput:
+
+1. **Silent coercion.** `parseInt('12abc')` returns `12`. An importer that
+   salvages values imports wrong prices with no error at all.
+2. **Partial application.** A file that fails halfway leaves the catalogue in a
+   state no one intended and no one can describe — half at new prices, half at
+   old.
+
+**Decision.**
+- **Validate** parses and checks the whole file and stores the accepted rows and
+  every error as an `import_jobs` row. It writes nothing else. A value that
+  cannot be read confidently becomes a reported error, never a coerced number.
+- **Commit** applies that stored payload inside one transaction and flips the
+  job status. A failure at row 1,900 rolls back rows 1–1,899; a re-submitted job
+  is a `409`, not a second import.
+- References are **re-resolved at commit time**. The catalogue can change between
+  preview and apply, and a preview must not become a licence to write stale
+  foreign keys.
+- **Nothing is auto-created.** An unknown brand, category, model, engine or trim
+  fails the row by name. A typo must not mint taxonomy, and a silently dropped
+  fitment produces a part that appears to fit nothing — indistinguishable from a
+  part nobody has mapped.
+
+**Consequences.** Two round trips instead of one, and the whole file is held in
+memory (capped at 4 MB of UTF-8 bytes and 5,000 rows). Both are worth it. A
+four-eyes approval step is the natural follow-up for a store with more than one
+administrator: today one valid file can reprice the entire catalogue, and the
+only controls are the mandatory preview, the transaction, and the audit entry.
+
+---
+
+## ADR-010 — Loading boundaries may not sit above routes that can 404
+
+**Status:** accepted
+
+**Question.** Why does `notFound()` return HTTP 200?
+
+**Evidence.** Observed, then bisected: every one of the ten `notFound()` routes
+answered 200 with a 404 body. A minimal reproduction narrowed it to a root
+`src/app/loading.tsx`. A `loading.tsx` creates a Suspense boundary above its
+whole segment, so Next flushes the HTTP response before the page component runs;
+`notFound()` can then only swap the rendered body, not the status that has
+already been sent.
+
+The result is a soft 404 — indexed by search engines, reported healthy by
+monitoring, invisible to link checkers. Next mitigates the SEO half by injecting
+`<meta name="robots" content="noindex">`, but the status stays wrong.
+
+**Decision.** A loading boundary may only sit above routes that never call
+`notFound()`. `/search` keeps its `loading.tsx` because it has no children that
+can 404; `/products` uses an explicit `<Suspense>` *inside* the page instead,
+because a file in that segment would also wrap `/products/[slug]`, which does.
+
+**Alternatives rejected.** Throwing from `generateMetadata` (reproduced the same
+200); removing `force-dynamic` (unrelated — the boundary, not the render mode,
+causes the flush); accepting the soft 404 because the `noindex` meta covers SEO
+(it does not cover monitoring, and a 200 for a missing resource is simply wrong).
+
+**Consequences.** The rule is a convention the framework does not enforce, so
+`tests/e2e/seo.spec.ts` asserts real 404 statuses on five missing-resource routes.
+Re-introducing a root `loading.tsx` fails CI rather than silently regressing.
+
+---
+
+## ADR-011 — Vehicle coherence is checked in the service, not the schema
+
+**Status:** accepted
+
+**Question.** What stops a configuration pairing a پژو ۲۰۶ with a پراید engine?
+
+**Evidence.** `vehicle_configurations` references model, generation, trim and
+engine as four independent foreign keys. Each one is individually valid, so the
+database happily accepts a combination describing a car that has never existed —
+and the fitment rows hanging off it would then make claims about that car.
+Discovered by attack testing: posting a foreign engine id succeeded, and posting
+an unknown model id surfaced a raw constraint violation as a 500.
+
+**Decision.** `getOrCreateConfiguration` verifies the model exists and is active,
+and that every supplied generation, trim and engine belongs to *that* model,
+before inserting. An unknown model is a `404`; a mismatched narrowing is a `422`
+naming which dimension is wrong.
+
+**Alternatives rejected.** A composite foreign key `(model_id, engine_id)`
+referencing `vehicle_engines (vehicle_model_id, id)` would push the check into
+the schema, which is stronger. It needs a redundant unique index on each child
+table and a redundant `vehicle_model_id` column on `vehicle_configurations` per
+dimension. Worth doing if this table ever accepts writes from outside the
+service; today the service is the only writer, and the check is covered by tests
+at both the service and HTTP boundaries.

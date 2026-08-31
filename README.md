@@ -136,6 +136,7 @@ ratings, reviews, availability or prices.
 | [docs/SECURITY.md](docs/SECURITY.md)         | Controls, threat notes, deployment requirements |
 | [docs/TESTING.md](docs/TESTING.md)           | Test layers and how to run them |
 | [docs/DESIGN.md](docs/DESIGN.md)             | Palette, verified contrast, the selective-glass rule, RTL specifics |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md)   | Measured LCP/CLS/TTFB, bundle sizes, query plans — and what was not measured |
 | [docs/DECISIONS.md](docs/DECISIONS.md)       | Architecture decision records, with the evidence behind each |
 | [docs/RESEARCH.md](docs/RESEARCH.md)         | Prior-art survey, licence review, and what was and was not adopted |
 

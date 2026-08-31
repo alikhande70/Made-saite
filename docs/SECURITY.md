@@ -130,6 +130,7 @@ raw IPs are never persisted.
 | Import as a catalogue-creation path | Nothing is auto-created. An unknown brand, category, vehicle model, engine or trim fails the row by name, so a typo in a supplier file cannot mint taxonomy. |
 | Import payload size | Capped at 4 MB **measured in UTF-8 bytes**, not characters — Persian is 2–3 bytes per character, so a character-counted cap would admit a file 2–3× the intended size. Row count is capped separately. Tested. |
 | Fitment claims without evidence | The compatibility verdict is computed server-side from `product_fitments` rows only. A missing row yields UNKNOWN, never a fabricated "fits" or "does not fit". |
+| Incoherent vehicle configurations | Model, generation, trim and engine are four independent foreign keys, so the database alone would accept a پژو ۲۰۶ paired with a پراید engine — a car that does not exist, carrying fitment claims. `getOrCreateConfiguration` verifies the model exists and that every narrowing belongs to it: unknown model → 404, mismatched narrowing → 422 naming the dimension. Found by attack testing; tested at both the service and HTTP boundaries (ADR-011). |
 
 ## Data handling
 
