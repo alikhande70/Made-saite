@@ -217,6 +217,20 @@
   }
 
   /*
+   * Modal scrim. Blur belongs on the dimmed *background*, never on the panel:
+   * the panel carries the content and stays opaque, while the blur separates
+   * the drawer from the page behind it. Falls back to a plain dim.
+   */
+  .scrim { background-color: rgb(10 16 23 / 0.6); }
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .scrim {
+      background-color: rgb(10 16 23 / 0.45);
+      -webkit-backdrop-filter: blur(3px);
+      backdrop-filter: blur(3px);
+    }
+  }
+
+  /*
    * The hero's technical ground: a carbon field with a faint measured grid.
    * Static — it is texture, not animation.
    */

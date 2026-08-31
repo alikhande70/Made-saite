@@ -52,7 +52,7 @@ export function ProductFilters(props: Props) {
       {/* Mobile: full-height drawer from the reading-start edge. */}
       {openOnMobile && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-steel-950/60" onClick={() => setOpenOnMobile(false)} aria-hidden />
+          <div className="scrim absolute inset-0" onClick={() => setOpenOnMobile(false)} aria-hidden />
           <div
             role="dialog"
             aria-modal="true"

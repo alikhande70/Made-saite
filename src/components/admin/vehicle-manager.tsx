@@ -253,7 +253,7 @@ export function VehicleTaxonomyManager({ initialTaxonomy }: { initialTaxonomy: A
                   ) : (
                     <div className="grid gap-4 lg:grid-cols-3">
                       <ChildPanel
-                        kind="generation" title="نسل‌ها" rows={detail.generations} busy={busy}
+                        title="نسل‌ها" rows={detail.generations} busy={busy}
                         onAdd={async (v) => { await send({ kind: 'generation', vehicleModelId: openModelId, ...v }, 'نسل ثبت شد.'); }}
                         onRemove={(id) => remove('generation', id)}
                         extraFields={[
@@ -262,12 +262,12 @@ export function VehicleTaxonomyManager({ initialTaxonomy }: { initialTaxonomy: A
                         ]}
                       />
                       <ChildPanel
-                        kind="trim" title="تیپ‌ها" rows={detail.trims} busy={busy}
+                        title="تیپ‌ها" rows={detail.trims} busy={busy}
                         onAdd={async (v) => { await send({ kind: 'trim', vehicleModelId: openModelId, ...v }, 'تیپ ثبت شد.'); }}
                         onRemove={(id) => remove('trim', id)}
                       />
                       <ChildPanel
-                        kind="engine" title="موتورها" rows={detail.engines} busy={busy}
+                        title="موتورها" rows={detail.engines} busy={busy}
                         onAdd={async (v) => { await send({ kind: 'engine', vehicleModelId: openModelId, ...v }, 'موتور ثبت شد.'); }}
                         onRemove={(id) => remove('engine', id)}
                         extraFields={[
@@ -292,7 +292,7 @@ interface Field { key: string; label: string; required?: boolean; numeric?: bool
 function EntityForm({
   title, fields, busy, onSubmit,
 }: {
-  title: string;
+  title?: string;
   fields: Field[];
   busy: boolean;
   onSubmit: (values: Record<string, string | number | null>) => void | Promise<void>;
@@ -315,7 +315,7 @@ function EntityForm({
         setValues({});
       }}
     >
-      <p className="text-sm font-bold text-steel-900">{title}</p>
+      {title && <p className="text-sm font-bold text-steel-900">{title}</p>}
       <div className="grid gap-2 sm:grid-cols-2">
         {fields.map((field) => (
           <label key={field.key} className="block">
@@ -336,9 +336,8 @@ function EntityForm({
 }
 
 function ChildPanel({
-  kind, title, rows, busy, onAdd, onRemove, extraFields = [],
+  title, rows, busy, onAdd, onRemove, extraFields = [],
 }: {
-  kind: Kind;
   title: string;
   rows: Child[];
   busy: boolean;
@@ -384,7 +383,6 @@ function ChildPanel({
       {adding && (
         <div className="mt-3 border-t border-line pt-3">
           <EntityForm
-            title=""
             busy={busy}
             fields={[
               { key: 'code', label: 'کد فنی', required: true, ltr: true },
@@ -395,7 +393,6 @@ function ChildPanel({
           />
         </div>
       )}
-      <p className="sr-only">{kind}</p>
     </div>
   );
 }

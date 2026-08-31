@@ -46,7 +46,7 @@ export function MobileNav({ categories }: { categories: NavCategory[] }) {
       {open && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="absolute inset-0 bg-steel-950/60"
+            className="scrim absolute inset-0"
             onClick={() => setOpen(false)}
             aria-hidden
           />

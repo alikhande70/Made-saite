@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { getCategoryTree, getVehicleTree, listFeatured, searchProducts } from '@/application/catalog-service';
+import {
+  getCategoryTree, getVehicleTree, listFeatured, listVehicleLandingPages, searchProducts,
+} from '@/application/catalog-service';
 import { getStoreProfile } from '@/application/settings-service';
 import { productQuerySchema } from '@/lib/validation';
 import { ProductRail } from '@/components/product-card';
@@ -21,11 +23,13 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function HomePage() {
-  const [categories, featured, newest, vehicles] = await Promise.all([
+  const [categories, featured, newest, vehicles, landingPages] = await Promise.all([
     getCategoryTree(),
     listFeatured(8),
     searchProducts(productQuerySchema.parse({ sort: 'newest', perPage: 8, inStock: true })),
     getVehicleTree(),
+    // The curated, indexable pairings — real inventory, not a hand-written list.
+    listVehicleLandingPages().catch(() => []),
   ]);
 
   return (
@@ -124,6 +128,35 @@ export default async function HomePage() {
             ))}
           </div>
         </section>
+
+        {landingPages.length > 0 && (
+          <section>
+            <SectionHeading
+              title="قطعات پرتقاضا بر اساس خودرو"
+              subtitle="ترکیب‌هایی که در انبار موجودی کافی دارند"
+              action={
+                <Link href="/vehicles" className="inline-flex items-center gap-1 text-sm font-semibold text-steel-700 hover:underline">
+                  همهٔ خودروها <ChevronEnd className="size-4" />
+                </Link>
+              }
+            />
+            <ul className="flex flex-wrap gap-2">
+              {landingPages.slice(0, 12).map((page) => (
+                <li key={`${page.categorySlug}-${page.modelSlug}`}>
+                  <Link
+                    href={`/parts/${encodeURIComponent(page.categorySlug)}/${encodeURIComponent(page.modelSlug)}`}
+                    className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-3.5 py-2 text-sm font-semibold text-steel-800 transition-colors hover:border-accent-300 hover:bg-accent-50"
+                  >
+                    {page.categoryNameFa} {page.modelNameFa}
+                    <span className="rounded-full bg-steel-100 px-1.5 text-xs font-bold tabular-nums text-steel-600">
+                      {toPersianDigits(page.productCount)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {featured.length > 0 && (
           <section>

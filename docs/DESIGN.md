@@ -53,7 +53,17 @@ contrast exactly where a misread costs money. An `@supports` guard keeps the
 fallback opaque rather than translucent-without-blur, which would be unreadable.
 
 The hero's `.carbon-field` is a static measured grid over charcoal — texture,
-not animation.
+not animation. The mobile drawer's `.scrim` blurs the *background* while the
+drawer panel itself stays opaque white — blur on the dimmed surround separates
+the drawer from the page; blur under the content would hurt it.
+
+**One deliberate deviation from the brief.** The search-suggestions dropdown was
+listed as a frosted surface and is not one. It carries the part names and
+numbers a shopper is about to click, over whatever page they were on — an
+overlay that inherits texture from a product grid behind it. Legibility of a
+result the customer is choosing outranks the effect, so the dropdown is opaque
+with a `shadow-pop` lift. The rule in this file is the one being followed:
+commerce-critical UI stays opaque.
 
 ## Persian and RTL
 
