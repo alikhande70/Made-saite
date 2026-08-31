@@ -158,7 +158,10 @@ step "Ensuring the database is up"
 # the migrate container then came up alone and failed against a host that does
 # not exist. `--wait` blocks on the healthcheck, so migrations never run against
 # a Postgres that is still initialising.
-compose up -d --wait db || fail "database did not start or never became healthy"
+# APP_IMAGE is set even though only `db` starts here: Compose interpolates the
+# whole file before it selects a service, and the migrate and app services
+# declare it required.
+APP_IMAGE="$IMAGE" compose up -d --wait db || fail "database did not start or never became healthy"
 ok "database is healthy"
 
 step "Applying migrations"
