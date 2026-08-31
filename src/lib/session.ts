@@ -7,6 +7,7 @@ import { cookies, headers } from 'next/headers';
 import { resolveSession, SESSION_COOKIE, SESSION_TTL_DAYS, type AuthUser } from '@/application/auth-service';
 import { errors } from '@/domain/errors';
 import { randomToken, sha256 } from './crypto';
+import { deriveClientIp, trustedProxyHops } from './client-ip';
 
 export const ANON_CART_COOKIE = 'ms_cart';
 /** The vehicle the shopper is browsing as. Not sensitive; readable by the UI. */
@@ -129,11 +130,21 @@ export async function rateLimitIdentity(user?: AuthUser | null): Promise<string>
   return `ip:${await getClientIp()}`;
 }
 
+/**
+ * The client address, derived only from hops this deployment actually declares.
+ *
+ * Previously this returned the first `X-Forwarded-For` entry, which is the part
+ * the *client* writes — so any caller could rotate it per request and walk
+ * straight through the login, checkout and callback rate limits. See
+ * `src/lib/client-ip.ts` for the derivation and `TRUSTED_PROXY_HOPS` for the
+ * configuration.
+ */
 export async function getClientIp(): Promise<string> {
   const h = await headers();
-  const forwarded = h.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0]!.trim();
-  return h.get('x-real-ip') ?? 'unknown';
+  return deriveClientIp(
+    { forwardedFor: h.get('x-forwarded-for'), realIp: h.get('x-real-ip') },
+    trustedProxyHops(),
+  );
 }
 
 export async function getClientIpHash(): Promise<string> {

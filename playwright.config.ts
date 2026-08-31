@@ -70,6 +70,12 @@ export default defineConfig({
       AUTH_SECRET: process.env.AUTH_SECRET ?? 'e2e_only_secret_value_at_least_32_chars!!',
       MOCK_GATEWAY_SECRET: process.env.MOCK_GATEWAY_SECRET ?? 'e2e_only_gateway_secret_1234567890',
       PAYMENT_PROVIDER: 'mock',
+      /*
+       * The suite presents a per-spec X-Forwarded-For so specs do not throttle
+       * each other. That header is only honoured when a proxy is declared, so
+       * declare one hop — Playwright is standing in for the reverse proxy.
+       */
+      TRUSTED_PROXY_HOPS: '1',
       ORDER_PAYMENT_TTL_MINUTES: '30',
       NODE_ENV: 'production',
     },
