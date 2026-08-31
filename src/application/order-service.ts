@@ -32,6 +32,7 @@ import {
 import { fulfillReservation, releaseReservation, returnStock } from './inventory-service';
 import { getPaymentProvider } from './payment/registry';
 import { generateTrackingCode } from '@/lib/crypto';
+import { INVARIANT, reportInvariantViolation } from '@/lib/observability';
 
 export type OrderActor = 'customer' | 'admin' | 'system' | 'gateway';
 
@@ -249,6 +250,12 @@ export async function handlePaymentCallback(
     .limit(1);
 
   if (!order) {
+    // Either a gateway pointed at the wrong deployment, or someone is probing
+    // the callback. Both are worth seeing; neither should leak detail back.
+    reportInvariantViolation(INVARIANT.CALLBACK_UNKNOWN_ORDER, {
+      provider: providerId,
+      orderId,
+    });
     return {
       orderId: null, orderNumber: null, trackingToken: null,
       outcome: 'FAILED', message: 'سفارش مرتبط با این پرداخت یافت نشد.',
@@ -343,6 +350,17 @@ export async function handlePaymentCallback(
       message: `مبلغ تأییدشده (${verification.amount}) با مبلغ سفارش (${order.grandTotal}) مطابقت ندارد.`,
       actorType: 'system',
       isPublic: false,
+    });
+    /*
+     * The order event is the audit record; this is the operational alert. A
+     * gateway confirming a different amount than the order is either an attack
+     * or a broken integration, and both want a human the same day.
+     */
+    reportInvariantViolation(INVARIANT.CALLBACK_AMOUNT_MISMATCH, {
+      orderId: order.id,
+      provider: providerId,
+      expectedAmount: order.grandTotal,
+      reportedAmount: verification.amount,
     });
     return {
       orderId: order.id,
