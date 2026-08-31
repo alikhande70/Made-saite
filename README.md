@@ -149,6 +149,9 @@ ratings, reviews, availability or prices.
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md)   | Measured LCP/CLS/TTFB, bundle sizes, query plans — and what was not measured |
 | [docs/DECISIONS.md](docs/DECISIONS.md)       | Architecture decision records, with the evidence behind each |
 | [docs/RESEARCH.md](docs/RESEARCH.md)         | Prior-art survey, licence review, and what was and was not adopted |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md)     | Deploy, roll back, back up, restore, alert — written for whoever is on call |
+| [docs/SMOKE_TEST_PLAN.md](docs/SMOKE_TEST_PLAN.md) | The manual first-launch pass against a real host, including the one test that moves money |
+| [docs/LAUNCH_GUIDE_FA.md](docs/LAUNCH_GUIDE_FA.md) | راهنمای فارسی برای صاحب فروشگاه — what only the owner can do |
 
 ---
 
@@ -186,11 +189,16 @@ These are deliberate boundaries of this build, not oversights:
   the mock gateway and refuses to default to it, so an unconfigured host cannot
   quietly record orders as paid. Deliberate staging use requires
   `ALLOW_SANDBOX_PAYMENTS=true`.
-- **No observability.** No error tracking, uptime monitoring or health endpoint.
-  Production failures would be invisible — see the P1 list in
-  [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md).
-- **Not deployed, not load-tested.** It runs locally against PostgreSQL and
-  passes its test suite; it has never served production traffic.
+- **Observability is partial.** There are health and readiness endpoints,
+  structured logging with redaction, and eight named invariants with documented
+  alert thresholds — but **no error-tracking provider is attached and nothing
+  external watches the site**, so an error reaches a log nobody reads. See the
+  P1 list in [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md).
+- **Deployable, not deployed.** There is a production image (built and booted in
+  CI), a compose stack, a deploy script with automatic rollback, and a rehearsed
+  backup and restore. None of it has touched a real host: no domain, no
+  certificate, no payment merchant account, no real transaction. Not
+  load-tested either.
 - **`notFound()` and streaming.** Real 404 statuses depend on no Suspense
   boundary sitting above a route that can 404. This is enforced by an E2E test
   rather than by the framework — see docs/ARCHITECTURE.md before adding a
