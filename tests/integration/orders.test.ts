@@ -9,9 +9,10 @@ import { addToCart } from '@/application/cart-service';
 import { placeOrder } from '@/application/checkout-service';
 import {
   cancelOrder, expireStaleOrders, getOrderByTrackingToken, getOrderForUser,
-  handlePaymentCallback, listOrdersForUser, setShipmentTracking, settleCashPayment,
+  handlePaymentCallback, listOrdersForUser, markOrderPaid, setShipmentTracking, settleCashPayment,
   transitionOrder, getDashboardSummary,
 } from '@/application/order-service';
+import { INVARIANT, setErrorReporter } from '@/lib/observability';
 import { signMockCallback } from '@/application/payment/mock-provider';
 import { DomainError } from '@/domain/errors';
 import { createProduct, createShippingMethod, createUser, resetDatabase, stockOf } from '../helpers/factory';
@@ -187,6 +188,173 @@ describe('failed payment', () => {
     const retry = await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
     expect(retry.outcome).toBe('SUCCEEDED');
     expect((await stockOf(order.product.id)).quantityOnHand).toBe(4);
+  });
+});
+
+/*
+ * The ledger invariant: a PAID order must have exactly one settled payment row
+ * that agrees with it.
+ *
+ * This is the one place where a wrong answer is indistinguishable from a right
+ * one on the customer's screen. The order page says «پرداخت شده», the shop
+ * ships the part, and the payments report — the record used to reconcile
+ * against the gateway's own statement — says the payment failed. Nobody finds
+ * that until the numbers do not add up at the end of the month.
+ */
+describe('payment ledger consistency', () => {
+  /** Every payment row for an order, oldest first. */
+  async function paymentsFor(orderId: string) {
+    return getDb().select().from(payments).where(eq(payments.orderId, orderId));
+  }
+
+  /**
+   * The invariant itself, asserted the same way everywhere it is used so a
+   * future path cannot satisfy a weaker version of it.
+   */
+  async function expectSettledLedger(orderId: string, amount: number) {
+    const [row] = await getDb().select().from(orders).where(eq(orders.id, orderId));
+    expect(row!.status).toBe('PAID');
+
+    const rows = await paymentsFor(orderId);
+    const settled = rows.filter((p) => p.status === 'SUCCEEDED');
+    expect(settled, 'a PAID order must have exactly one settled payment row').toHaveLength(1);
+    expect(settled[0]!.amount).toBe(amount);
+    expect(settled[0]!.transactionId, 'a settled payment must carry the gateway transaction id').toBeTruthy();
+    // Nothing may still be sitting in the state a checkout opens with: an
+    // INITIATED row alongside a paid order is an unfinished attempt nobody
+    // closed.
+    expect(rows.some((p) => p.status === 'INITIATED')).toBe(false);
+  }
+
+  it('settles the payment row when a retry succeeds after a failure', async () => {
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await handlePaymentCallback('mock', await callbackParams(order.orderId, 'FAILED', order.grandTotal));
+
+    const retry = await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
+    expect(retry.outcome).toBe('SUCCEEDED');
+
+    await expectSettledLedger(order.orderId, order.grandTotal);
+    expect((await stockOf(order.product.id)).quantityOnHand).toBe(4);
+    expect((await stockOf(order.product.id)).quantityReserved).toBe(0);
+  });
+
+  it('settles the payment row when a retry succeeds after the customer cancelled', async () => {
+    // Abandoning at the gateway and coming back is ordinary customer
+    // behaviour, not an exceptional path — the order is still PENDING_PAYMENT
+    // and its stock is still reserved, so the retry must be allowed to settle.
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await handlePaymentCallback('mock', await callbackParams(order.orderId, 'CANCELLED', order.grandTotal));
+
+    const retry = await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
+    expect(retry.outcome).toBe('SUCCEEDED');
+
+    await expectSettledLedger(order.orderId, order.grandTotal);
+  });
+
+  it('settles the payment row on a first-attempt success', async () => {
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    const result = await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
+    expect(result.outcome).toBe('SUCCEEDED');
+    await expectSettledLedger(order.orderId, order.grandTotal);
+  });
+
+  it('keeps exactly one settled row when a success callback is delivered twice', async () => {
+    // Gateways retry callbacks. A replay must not produce a second settlement
+    // or overwrite the transaction id of the first.
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
+    const [first] = await paymentsFor(order.orderId);
+
+    const replay = await handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal));
+    expect(replay.outcome).toBe('ALREADY_SETTLED');
+
+    await expectSettledLedger(order.orderId, order.grandTotal);
+    const [after] = await paymentsFor(order.orderId);
+    expect(after!.transactionId).toBe(first!.transactionId);
+    expect((await stockOf(order.product.id)).quantityOnHand).toBe(4);
+  });
+
+  it('holds the invariant when a retry and a late callback race', async () => {
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await handlePaymentCallback('mock', await callbackParams(order.orderId, 'FAILED', order.grandTotal));
+
+    const [a, b] = await Promise.all([
+      handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal)),
+      handlePaymentCallback('mock', await callbackParams(order.orderId, 'SUCCEEDED', order.grandTotal)),
+    ]);
+    // Exactly one may settle; the other must observe the settled order.
+    expect([a.outcome, b.outcome].filter((o) => o === 'SUCCEEDED')).toHaveLength(1);
+
+    await expectSettledLedger(order.orderId, order.grandTotal);
+    // Stock is consumed once, not twice.
+    expect((await stockOf(order.product.id)).quantityOnHand).toBe(4);
+    expect((await stockOf(order.product.id)).quantityReserved).toBe(0);
+  });
+
+  it('refuses to mark an order paid when there is no settleable payment row', async () => {
+    /*
+     * The enforcement, not just the fix. If the ledger cannot be settled, the
+     * order must not claim to be paid — a PAID order with no successful
+     * payment is the exact contradiction this invariant exists to prevent, and
+     * it must be loud rather than silent.
+     */
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await getDb().delete(payments).where(eq(payments.orderId, order.orderId));
+
+    const reported: string[] = [];
+    setErrorReporter({
+      name: 'test',
+      captureError(_error, context) { reported.push(String(context.event)); },
+    });
+
+    try {
+      await expect(markOrderPaid(order.orderId, {
+        actorType: 'gateway', settlePayment: true, transactionId: 'tx-nothing-to-settle',
+      })).rejects.toThrow(DomainError);
+    } finally {
+      setErrorReporter(null);
+    }
+
+    // The order transition rolled back with the settlement.
+    const [row] = await getDb().select().from(orders).where(eq(orders.id, order.orderId));
+    expect(row!.status).toBe('PENDING_PAYMENT');
+    expect(reported).toContain(INVARIANT.PAID_WITHOUT_VERIFICATION);
+  });
+
+  it('still leaves a cash-on-delivery payment open, because nothing was collected', async () => {
+    /*
+     * The invariant is about *gateway* settlement. Cash on delivery confirms
+     * the order before any money moves, and the row stays INITIATED on purpose
+     * so the outstanding amount remains visible to the shop. Asserting a
+     * blanket "PAID implies SUCCEEDED" would have made this correct behaviour
+     * look like a defect.
+     */
+    await createShippingMethod({ code: 'post', baseCost: 0 });
+    const product = await createProduct({ stock: 5, price: 1_000_000 });
+    const identity = { anonToken: `cod-${Math.random()}` };
+    await addToCart(identity, product.id, 1);
+    const placed = await placeOrder(identity, { ...address, shippingMethodCode: 'post', paymentProvider: 'cod' },
+      { userId: null, siteUrl: SITE });
+
+    const [row] = await getDb().select().from(orders).where(eq(orders.id, placed.orderId));
+    expect(row!.status).toBe('PAID');
+    const [payment] = await getDb().select().from(payments).where(eq(payments.orderId, placed.orderId));
+    expect(payment!.status).toBe('INITIATED');
+
+    await settleCashPayment(placed.orderId, null);
+    const [after] = await getDb().select().from(payments).where(eq(payments.orderId, placed.orderId));
+    expect(after!.status).toBe('SUCCEEDED');
+  });
+
+  it('does not settle a payment for an order that was never paid', async () => {
+    // The mirror of the invariant: a failed payment must leave nothing settled.
+    const order = await placeTestOrder({ stock: 5, qty: 1 });
+    await handlePaymentCallback('mock', await callbackParams(order.orderId, 'FAILED', order.grandTotal));
+
+    const [row] = await getDb().select().from(orders).where(eq(orders.id, order.orderId));
+    expect(row!.status).toBe('PENDING_PAYMENT');
+    const rows = await paymentsFor(order.orderId);
+    expect(rows.filter((p) => p.status === 'SUCCEEDED')).toHaveLength(0);
   });
 });
 

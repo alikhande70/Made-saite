@@ -165,7 +165,15 @@ export async function markOrderPaid(
     actorType: OrderActor;
     actorUserId?: string | null;
     message?: string;
-    /** Whether to flip the payment row to SUCCEEDED (false for cash on delivery). */
+    /**
+     * Whether money has actually been collected and verified.
+     *
+     * `true` for a gateway settlement: the payment row must end SUCCEEDED.
+     * `false` for cash on delivery, where the order is confirmed but nothing
+     * has been collected — the row stays INITIATED so the outstanding amount
+     * remains visible, and `settleCashPayment` closes it when the courier
+     * hands over the cash.
+     */
     settlePayment: boolean;
     transactionId?: string | null;
     providerRef?: string | null;
@@ -181,7 +189,7 @@ export async function markOrderPaid(
     });
 
     if (options.settlePayment) {
-      await tx
+      const settled = await tx
         .update(payments)
         .set({
           status: 'SUCCEEDED',
@@ -189,7 +197,45 @@ export async function markOrderPaid(
           providerRef: options.providerRef ?? undefined,
           updatedAt: new Date(),
         })
-        .where(and(eq(payments.orderId, orderId), eq(payments.status, 'INITIATED')));
+        .where(and(
+          eq(payments.orderId, orderId),
+          /*
+           * A retry after a failed or abandoned attempt is ordinary customer
+           * behaviour, not an exceptional path: the order is still
+           * PENDING_PAYMENT and its stock is still reserved. This row records
+           * the *current* payment state of the order — one row per order,
+           * written at checkout — so a retry has to be able to move it out of
+           * FAILED or CANCELLED. The attempt history lives in `orderEvents`,
+           * which already records every PAYMENT_FAILED and PAYMENT_CONFIRMED.
+           *
+           * Matching only INITIATED, as this did, silently matched nothing on
+           * every retry: the order became PAID while the payments table — the
+           * record used to reconcile against the gateway's own statement —
+           * still said the payment failed.
+           *
+           * SUCCEEDED is excluded so a replayed callback cannot overwrite the
+           * transaction id of the settlement that really happened.
+           */
+          inArray(payments.status, ['INITIATED', 'FAILED', 'CANCELLED']),
+        ))
+        .returning({ id: payments.id });
+
+      /*
+       * The invariant, enforced rather than assumed: a gateway-settled PAID
+       * order has exactly one SUCCEEDED payment row. If nothing was settled,
+       * the order must not be marked paid — throwing rolls back the transition
+       * above, so the order stays PENDING_PAYMENT and the failure is visible
+       * instead of being a contradiction nobody finds until the month-end
+       * reconciliation.
+       */
+      if (settled.length === 0) {
+        reportInvariantViolation(INVARIANT.PAID_WITHOUT_VERIFICATION, {
+          orderId,
+          reason: 'no settleable payment row',
+          transactionId: options.transactionId ?? null,
+        });
+        throw errors.conflict('وضعیت پرداخت این سفارش قابل تسویه نیست. لطفاً با پشتیبانی تماس بگیرید.');
+      }
     }
   });
 }
