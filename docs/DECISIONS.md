@@ -382,3 +382,116 @@ experience; it does not prevent a defect. The money-and-stock invariants are
 held by the cart lock and by the inventory reservation, both of which are
 directly tested. Doing it properly touches the checkout transaction, so it wants
 its own change rather than being bolted onto a CI fix.
+
+---
+
+## ADR-014 — Deploy as Docker Compose on a single VPS
+
+**Status:** accepted
+
+**Question.** What should the production topology be, given an owner who is not
+an engineer and a shop that must stay reachable from inside Iran?
+
+**Options considered.**
+
+**Option A — one VPS, Docker Compose (app + PostgreSQL + reverse proxy).**
+Two long-lived containers and a one-shot migration container. The database is
+published on no port and reachable only over the compose network. One command
+deploys, one command rolls back.
+- Everything the deployment needs is committed: `Dockerfile`,
+  `docker-compose.production.yml`, `scripts/deploy.sh`. The state that is *not*
+  in git is one `.env.production` file and one volume.
+- The image is byte-identical between staging and production, so a staging
+  rehearsal tests the artefact that ships, not an approximation of it.
+- Rollback is a re-tag of the previous image: the pre-deploy dump exists, the
+  previous image id is recorded, and `deploy.sh --rollback` uses both.
+- Cost: one VPS. Operationally, the owner learns two commands.
+
+**Option B — one VPS, systemd units, Node and PostgreSQL installed natively.**
+Fewer moving parts at runtime, and no container layer to reason about.
+- But the deployment surface grows rather than shrinks: a Node version to pin
+  and upgrade, a `postgresql.conf` to tune, unit files, a user to create, and a
+  build that now happens *on* the production host — which means a failed build
+  can take the site down, and the running code is whatever the last `git pull`
+  produced rather than a named artefact.
+- Rollback becomes "check out the old SHA and rebuild", which is slow and can
+  itself fail. That is the property that decided it: rollback must be fast and
+  must not depend on a build succeeding.
+
+**Option C — a managed platform.**
+- **Vercel, Netlify, Fly, Railway.** Disqualified for this market, not on
+  merit. They restrict access from Iran, and the shop's customers, its owner
+  and its payment gateways are all inside Iran. A platform the owner cannot
+  reliably reach to operate the site is not a candidate.
+- **An Iranian managed platform (Liara, ArvanCloud, Parspack).** Genuinely
+  viable, and the easiest path for a non-technical owner: managed PostgreSQL,
+  managed TLS, managed backups. The cost is a provider-shaped deployment —
+  their CLI, their build pipeline, their database — which is hard to rehearse
+  locally and hard to leave.
+
+**Decision.** Option A. It is the only option where the thing tested, the thing
+rehearsed and the thing deployed are the same artefact, and where rollback does
+not depend on a build. `output: 'standalone'` keeps the image small enough that
+this costs little.
+
+Deliberately **not** in the compose file: TLS termination. A reverse proxy
+(Caddy is the fewest moving parts, nginx if one already exists) sits in front,
+terminates HTTPS, and forwards to `127.0.0.1:3000`. Putting certificate renewal
+inside the application's compose project couples two things with very different
+change rates, and TLS must keep working across an application rollback.
+
+**What this decision assumes.** A single application instance. Every invariant
+that matters — stock reservation, checkout serialization, order state — is held
+in PostgreSQL with row locks, not in process memory, so horizontal scaling is
+*possible*; it is simply not needed and not rehearsed.
+
+**Revisit if:** one host stops being enough (then the app scales out first, and
+PostgreSQL moves to a managed service before it is replicated by hand); or the
+owner's operational appetite turns out to be lower than assumed, in which case
+Option C on an Iranian provider is the fallback and the container image ports
+to it directly.
+
+---
+
+## ADR-013 addendum — the idempotency key re-evaluated for production
+
+**Status:** re-evaluated in the production context; still P2
+
+The original evaluation was made against a local deployment. Production adds
+three conditions that argue *for* the key, and one that argues against changing
+the verdict now.
+
+**What production makes worse.**
+- A reverse proxy adds a second place a response can be lost, and its own
+  timeout. A gateway timeout after the order has committed produces exactly the
+  response-loss case, and the customer sees an error page for an order that
+  exists.
+- Real gateways redirect the browser away and back. A customer who uses the
+  back button, or whose mobile network drops during the redirect, can resubmit.
+  The cart lock still prevents the duplicate order — that is proven — but the
+  resubmit is now a realistic event rather than a synthetic one.
+- Mobile networks make retries common in a way localhost never showed.
+
+**What has not changed.** None of this is a correctness gap. The cart lock
+still yields exactly one order under every concurrency pattern tested, stock is
+still reserved once, and no money can be taken twice. What the customer loses
+is the tracking token, and it is worth being exact about how bad that is: the
+customer-facing tracking page resolves a **token only**. There is no self-serve
+lookup by phone number. So a guest whose response is lost has no way back to
+their own order. The order is recoverable — but only by the owner, who can find
+it in the admin order list by phone number — which means recovery depends on
+the customer contacting support and the owner knowing to look.
+
+**Decision.** Unchanged: P2, with the design in ADR-013 standing. It should be
+taken up before the first marketing campaign, because the failure mode scales
+with traffic on unreliable networks, and it should not be taken up in the same
+change as a deployment or a payment-gateway switch — it touches the checkout
+transaction, and that transaction should change for one reason at a time.
+
+**Escalate to P1 if:** the production logs show `CART_EMPTY` responses arriving
+for carts that have just produced an order. That is the signature of this exact
+failure. It is not currently reported as a named invariant — `CART_EMPTY` is an
+ordinary domain error — so detecting it means either watching for that response
+code on the checkout route or adding the invariant. Adding it is cheap and is
+the right first step, because it converts this from a predicted problem into a
+measured one before any of the design work is committed to.
