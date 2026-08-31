@@ -127,6 +127,64 @@ Persian search is covered by a GIN index on the generated `search_doc` tsvector
 plus a `gin_trgm_ops` index on `search_plain` for typo tolerance — see
 docs/SEARCH.md.
 
+## LAB Core Web Vitals under throttling
+
+**These are LAB metrics.** They are not field data, not RUM, and not CrUX. No
+real user has loaded this site. See "Not measured" below for what that leaves
+open.
+
+Conditions: production build, `next start` on localhost, PostgreSQL on the same
+host, headless Chromium, **cold cache** (`Network.setCacheDisabled`), **4× CPU
+throttling**, and **150 ms of latency injected per request**.
+
+The latency is injected through a Playwright route handler rather than through
+`Network.emulateNetworkConditions`, because **Chrome ignores CDP network
+emulation on loopback**. That was verified rather than assumed: raising the
+emulated latency from 0 ms to 1000 ms moved the measured TTFB from 39 ms to
+30 ms — i.e. not at all. Any measurement here that relies on CDP network
+throttling against localhost is meaningless, and an earlier run of this same
+harness produced a misleading CLS of exactly 0.0000 on every page for that
+reason.
+
+### Desktop, 1440×900
+
+| Page | LCP | CLS | FCP | Transfer | Verdict |
+| ---- | --- | --- | --- | -------- | ------- |
+| `/` | 804 ms | 0.0045 | 804 ms | 310 KB | good |
+| `/products` | 1032 ms | 0.0003 | 652 ms | 308 KB | good |
+| `/search?q=فیلتر روغن` | 1068 ms | 0.0001 | 624 ms | 270 KB | good |
+| `/parts/brake-pads/peugeot-206` | 676 ms | 0.0006 | 676 ms | 258 KB | good |
+| `/cart` | 592 ms | 0.0003 | 592 ms | 245 KB | good |
+
+### Mobile, 360×780
+
+| Page | LCP | CLS | FCP | Transfer | Verdict |
+| ---- | --- | --- | --- | -------- | ------- |
+| `/` | 712 ms | 0.0021 | 712 ms | 300 KB | good |
+| `/products` | 1040 ms | 0.0003 | 592 ms | 293 KB | good |
+| `/search?q=فیلتر روغن` | 984 ms | 0.0001 | 600 ms | 264 KB | good |
+| `/parts/brake-pads/peugeot-206` | 648 ms | 0.0011 | 648 ms | 253 KB | good |
+| `/cart` | 556 ms | 0.0006 | 556 ms | 236 KB | good |
+
+Against Google's thresholds — LCP ≤ 2500 ms, CLS ≤ 0.1 — every page is inside
+"good" with substantial headroom: the worst LCP is 1068 ms against a 2500 ms
+budget, and the worst CLS is 0.0045 against 0.1.
+
+**How much of that headroom survives contact with reality is unknown.** The
+document is still served from the same machine, so real server latency, TLS
+handshake, DNS, and Iranian mobile network conditions are all absent. The
+honest reading is: **the application-controlled portion of LCP and CLS is
+small enough that the network will dominate**, which is the right place for
+the budget to be spent — but the field number is not predicted here.
+
+TTFB in this table is not meaningful. The injected delay lands before
+`requestStart`, so `responseStart - requestStart` excludes it and reports
+12–46 ms. LCP, FCP and CLS are measured from navigation start and do include
+it.
+
+**INP is not measured at all.** It requires real interactions from real users;
+a synthetic harness cannot produce it.
+
 ## Not measured
 
 - **Field / real-user metrics.** No RUM, no CrUX data, no measurement over a
