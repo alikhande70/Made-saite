@@ -232,6 +232,9 @@ Severity: **P0** blocker · **P1** major · **P2** important · **P3** minor.
 | N9 | Owner-operable documentation | PASS | `docs/LAUNCH_GUIDE_FA.md` (Persian), `docs/OPERATIONS.md`, `docs/SMOKE_TEST_PLAN.md` | — | — |
 | N10 | Automated post-deploy smoke tests | PASS | 9 non-destructive checks gate the rollback, including a real 404 and the admin redirect | — | — |
 | N17 ↑↓ | First deploy works on a clean host | PASS | **was broken four ways and nothing tested it.** Reproduced on an empty Docker project with only `./scripts/deploy.sh`; each fix verified by re-running. CI now drives the real entrypoint from nothing on every push | — | — |
+| N19 ↑↓ | Deploy uses the configured database, not the operator's shell | PASS | **found by the new clean-host gate on its first CI run.** The compose file reads `${DATABASE_URL:?}` by interpolation, and Compose resolves interpolation from the *shell* before `--env-file` — so a `DATABASE_URL` already exported (direnv, `.bashrc`, an earlier `npm run db:migrate`) silently repointed the whole stack, migrations included. `deploy.sh` now sources the deployment file first, fixing every compose call at once. CI reproduces the hostile ambient value by construction | `scripts/deploy.sh` | — | — |
+| N21 ↑↓ | Rollback uses the configured database too | PASS | **the first fix missed the path that matters most.** `--rollback` returns before the preflight, so it never loaded the deployment file and brought the app up against the operator's ambient `DATABASE_URL` — during an incident, which is when rollback runs. The next CI run caught it: the rolled-back app never became ready. Configuration is now loaded before any branching | `scripts/deploy.sh` | — | — |
+| N20 ↑↓ | Teardown actually tears down | PASS | **second silent no-op of the same shape.** `compose down -v` also interpolates the whole file, so it failed on the required variables, removed nothing, and had its stderr and exit code discarded — leaving a populated `pgdata` volume that a later deploy met with the *previous* password (`28P01`). Both teardowns now pass `--env-file` and no longer hide stderr | `.github/workflows/ci.yml` | — | — |
 | N18 ↑↓ | Pre-deploy backup actually taken | PASS | **it never ran.** Every redeploy printed "first deployment, nothing to back up" while the database was up, and wrote no dump. The condition tested command success, not whether a container was running, and failed on APP_IMAGE interpolation. Now taken **and read back** with `pg_restore --list` before migrating | — | — |
 | N16 | E2E exercises the production server | **PARTIAL** | the Playwright harness runs `next start`, which now warns it "does not work with output: standalone". It does serve correctly — 104 E2E tests pass through full purchase journeys — but production runs `node server.js` from the standalone bundle, a different wrapper over the same build. CI's container readiness step boots the standalone server directly, so both paths are exercised, just not by the same suite | P3 | point `webServer` at the standalone server once it can be done without destabilising the harness |
 | N11 | Domain + HTTPS | **FAIL** | no domain registered, no certificate | **P1** | owner action |
@@ -295,6 +298,9 @@ having been caught making it too early once.
 | - | --- | --- |
 | N17 | First deploy impossible: migrate container could not load drizzle-orm; `--no-deps` never started the database; `APP_IMAGE` interpolation broke starting `db` alone | fixed, rehearsed clean end to end, gated in CI |
 | N18 | Pre-deploy backup silently never taken | taken and read back before migrating |
+| N19 | An exported `DATABASE_URL` silently redirected the whole deploy | the deployment file is authoritative |
+| N20 | `compose down -v` removed nothing and said nothing | scoped, interpolable, stderr visible |
+| N21 | `--rollback` skipped the config load entirely | configuration loaded before any branch |
 | N1 | Running container reported no build SHA, though the runbook says to read it | carried into the runtime stage, asserted in CI |
 | E12 | `order.status = PAID` reachable with `payment.status = FAILED` | retry settles the row; invariant enforced and reported |
 
@@ -347,9 +353,19 @@ rather than at code:
 None of the three is visible from reading application code, which is the
 argument for having done this phase at all.
 
-Three further defects were found by the same exercise, on top of the two the
+Five further defects were found by the same exercise, on top of the two the
 review named: the pre-deploy backup never ran, the image could not report its
-own commit, and a CI assertion passed vacuously on an errored command.
+own commit, a CI assertion passed vacuously on an errored command, an exported
+`DATABASE_URL` silently redirected the entire deploy, and the teardown removed
+nothing while reporting success.
+
+Four of those five are one mistake repeated: **a shell construct whose failure
+was indistinguishable from success.** `compose ps` exiting 0 with no output,
+`compose down` dying on interpolation behind `2>/dev/null || true`, an
+assertion reading an errored command's empty output. Each looked correct and
+each did nothing. That pattern, not any individual bug, is what the clean-host
+gate exists to catch — and it caught two of them after being written to catch
+the first.
 
 **The honest statement is: the system is now demonstrably deployable — a clean
 first deploy, a redeploy with a verified backup, and a rollback have all been

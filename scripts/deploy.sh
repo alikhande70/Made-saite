@@ -73,6 +73,29 @@ smoke_test() {
   [ "$failures" -eq 0 ] || return 1
 }
 
+# ── configuration ────────────────────────────────────────────────────────────
+# Loaded before anything branches, because *every* path below needs it — the
+# rollback most of all.
+#
+# The deployment file is authoritative over the invoking shell. This is not a
+# style preference; it closes a silent, destructive failure mode. The compose
+# file reads its configuration by interpolation (${DATABASE_URL:?} and
+# friends), and Compose resolves interpolation from the *shell environment
+# first*, falling back to --env-file only for names the shell does not define.
+# So an operator with DATABASE_URL already exported — from running
+# npm run db:migrate earlier in the same terminal, from direnv, from a
+# .bashrc — silently points the whole stack at that database instead of the
+# one in .env.production. Nothing in the output would say so.
+#
+# Sourcing with `set -a` makes the two agree, with the file winning, for every
+# compose call in this script at once rather than leaving each to get it right
+# separately.
+[ -f "$ENV_FILE" ] || fail "${ENV_FILE} not found — copy .env.example and fill it in"
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+
 # ── rollback ─────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "--rollback" ]; then
   [ -f "$PREVIOUS_TAG_FILE" ] || fail "no previous image recorded; nothing to roll back to"
@@ -99,27 +122,6 @@ fi
 step "Preflight"
 [ -f "$ENV_FILE" ] || fail "${ENV_FILE} not found — copy .env.example and fill it in"
 
-# The deployment file is authoritative over the invoking shell. This is not a
-# style preference — it closes a silent, destructive failure mode.
-#
-# The compose file reads its configuration by interpolation (${DATABASE_URL:?}
-# and friends), and Compose resolves interpolation from the *shell environment
-# first*, falling back to --env-file only when a name is unset. So an operator
-# with DATABASE_URL already exported — from running npm run db:migrate earlier
-# in the same terminal, from direnv, from a .bashrc — silently deploys the
-# whole stack against that database instead of the one in .env.production.
-# Migrations included. Nothing in the output would say so.
-#
-# Sourcing the file with `set -a` makes the two agree, with the file winning,
-# for every compose call in this script at once — up, migrate, backup and
-# rollback — rather than leaving each one to get it right separately.
-#
-# Caught by CI, which exports a DATABASE_URL pointing at its own test database
-# and would deploy against it if this were removed.
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
 [ -f "$COMPOSE_FILE" ] || fail "${COMPOSE_FILE} not found"
 command -v docker >/dev/null || fail "docker is not installed"
 docker compose version >/dev/null 2>&1 || fail "docker compose v2 is required"
