@@ -64,6 +64,19 @@ COPY --from=build --chown=nextjs:nodejs /app/public ./public
 COPY --from=build --chown=nextjs:nodejs /app/src/infrastructure/db/migrations ./migrations
 COPY --from=build --chown=nextjs:nodejs /app/scripts/migrations-runner.cjs ./migrations-runner.cjs
 
+# The migration runner is a second entrypoint, and Next's standalone tracer only
+# keeps what the *server* imports. It inlines drizzle-orm into the compiled
+# chunks rather than leaving it as a package, so `require('drizzle-orm/...')`
+# from the runner cannot resolve and the migrate container dies before it opens
+# a connection. `pg` survives because serverExternalPackages keeps it whole.
+#
+# Copied rather than reimplemented: the runner must use the same migrator and
+# the same journal as `npm run db:migrate`, or production would compute
+# different migration hashes than development and CI and re-apply or skip work.
+# drizzle-orm declares no runtime dependencies of its own, so this is the whole
+# of it.
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
+
 USER nextjs
 EXPOSE 3000
 

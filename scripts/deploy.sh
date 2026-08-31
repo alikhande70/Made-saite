@@ -150,6 +150,17 @@ else
   echo "  (database not yet running — first deployment, nothing to back up)"
 fi
 
+step "Ensuring the database is up"
+# Explicit, and before anything that needs it. Every other `compose up` here
+# passes --no-deps so that a redeploy or a rollback swaps only the application
+# and never restarts the database underneath it — but that also means nothing
+# would start the database on a host that has never run one. On a first deploy
+# the migrate container then came up alone and failed against a host that does
+# not exist. `--wait` blocks on the healthcheck, so migrations never run against
+# a Postgres that is still initialising.
+compose up -d --wait db || fail "database did not start or never became healthy"
+ok "database is healthy"
+
 step "Applying migrations"
 # The migrate service is one-shot and exits non-zero on failure, which stops the
 # deployment here rather than starting an app against a mismatched schema.
