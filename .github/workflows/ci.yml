@@ -138,33 +138,89 @@ jobs:
           echo "$OUTPUT" | grep -q 'test or development database' \
             || { echo "::error::The test database was not reported."; exit 1; }
 
-      - name: Container serves readiness against a real database
+      - name: A first deploy works on a clean host
         run: |
-          # Proves the image can actually boot and reach Postgres, so the
-          # config gate above cannot pass merely by refusing everything.
-          docker run -d --name madesaite-smoke --network host \
-            -e NODE_ENV=production \
-            -e SITE_URL=http://localhost:3100 \
-            -e PAYMENT_PROVIDER=mock \
-            -e ALLOW_SANDBOX_PAYMENTS=true \
-            -e AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000 \
-            -e MOCK_GATEWAY_SECRET=ci_only_gateway_secret_0000 \
-            -e DATABASE_URL="$DATABASE_URL" \
-            -e PORT=3100 \
-            madesaite:ci
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3100/api/ready > /tmp/ready.json 2>/dev/null; then
-              echo "ready after ${i}s: $(cat /tmp/ready.json)"
-              curl -fsS http://127.0.0.1:3100/api/health
-              docker rm -f madesaite-smoke > /dev/null
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::The container never became ready."
-          docker logs madesaite-smoke || true
-          docker rm -f madesaite-smoke > /dev/null || true
-          exit 1
+          # This drives the documented entrypoint — scripts/deploy.sh — against
+          # an empty Docker project, because that is the contract an operator
+          # actually follows and nothing else was testing it.
+          #
+          # The previous gate ran `docker run` against the workflow's own
+          # PostgreSQL service, which the *host* had already migrated. It
+          # proved the app boots. It never started the compose stack, never ran
+          # the migrate container, and never executed deploy.sh — so it missed
+          # a first deploy that could not work at all: drizzle-orm was absent
+          # from the runtime image, and --no-deps meant the database was never
+          # started.
+          set -euo pipefail
+
+          # A clean project: no containers, no volumes, no database.
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker compose -f docker-compose.production.yml down -v --remove-orphans 2>/dev/null || true
+
+          # Gitignored, so the working tree stays clean and deploy.sh proceeds.
+          cat > .env.production <<'ENV'
+          POSTGRES_USER=madesaite
+          POSTGRES_PASSWORD=ci_only_db_password_not_for_production
+          POSTGRES_DB=madesaite
+          DATABASE_URL=postgres://madesaite:ci_only_db_password_not_for_production@db:5432/madesaite
+          SITE_URL=http://localhost:3500
+          APP_PORT=3500
+          PAYMENT_PROVIDER=mock
+          AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000
+          MOCK_GATEWAY_SECRET=ci_only_gateway_secret_0000
+          TRUSTED_PROXY_HOPS=1
+          ENV
+          mkdir -p backups
+
+          # The SHA is passed explicitly: actions/checkout leaves a detached
+          # HEAD, so deploy.sh's `origin/$(git rev-parse --abbrev-ref HEAD)`
+          # default would resolve to origin/HEAD, not this commit.
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh "${{ github.sha }}"
+
+      - name: The deployed stack is what it claims to be
+        run: |
+          set -euo pipefail
+          compose() { docker compose -f docker-compose.production.yml --env-file .env.production "$@"; }
+
+          # The migrate container really applied the schema — not the host.
+          TABLES=$(compose exec -T db psql -U madesaite -d madesaite -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'")
+          echo "tables: $TABLES"
+          [ "$TABLES" -ge 30 ] || { echo "::error::migrations did not run in the container"; exit 1; }
+
+          # The running container can name the commit it was built from; the
+          # operations runbook tells operators to read exactly this.
+          SHA=$(compose exec -T app printenv NEXT_PUBLIC_BUILD_SHA | tr -d '\r\n')
+          echo "build sha: $SHA"
+          [ "$SHA" = "${{ github.sha }}" ] || { echo "::error::image does not report its commit ($SHA)"; exit 1; }
+
+          # PostgreSQL must not be reachable from outside the compose network.
+          PORTS=$(compose ps --format json db | grep -o '"PublishedPort":[0-9]*' | grep -v ':0' || true)
+          [ -z "$PORTS" ] || { echo "::error::the database publishes a port: $PORTS"; exit 1; }
+
+      - name: Rollback returns to the previous release
+        run: |
+          # A rollback path that has never been executed is a hope, not a path.
+          set -euo pipefail
+          PREVIOUS=$(cat .deploy/current-image)
+
+          # Deploy the same commit again so a previous image is recorded, then
+          # roll back to it and prove the stack still serves.
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh "${{ github.sha }}"
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh --rollback
+
+          curl -fsS http://127.0.0.1:3500/api/ready
+          echo "rolled back to $PREVIOUS and still ready"
+
+      - name: Tear down the rehearsal stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.production.yml --env-file .env.production \
+            down -v --remove-orphans 2>/dev/null || true
+          rm -f .env.production
 
       - uses: actions/upload-artifact@v4
         if: failure()
