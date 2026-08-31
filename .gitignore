@@ -5,9 +5,16 @@ build/
 dist/
 *.tsbuildinfo
 next-env.d.ts
+# Secrets. `.env*` catches .env.production, .env.staging and anything else an
+# operator creates on a server; only the committed template is exempt.
 .env
-.env.local
-.env*.local
+.env.*
+!.env.example
+
+# Database dumps contain every customer record.
+/backups/
+*.dump
+*.sql.gz
 coverage/
 test-results/
 playwright-report/
@@ -16,3 +23,4 @@ blob-report/
 .DS_Store
 *.log
 pgdata/
+.deploy/

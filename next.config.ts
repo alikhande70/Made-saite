@@ -20,6 +20,13 @@ const csp = [
 ].join('; ');
 
 const nextConfig: NextConfig = {
+  /*
+   * `standalone` emits a self-contained server with only the modules actually
+   * imported, so the runtime image carries no node_modules tree and no build
+   * tooling. It is what makes the production image small and its contents
+   * auditable.
+   */
+  output: 'standalone',
   reactStrictMode: true,
   devIndicators: false,
   poweredByHeader: false,

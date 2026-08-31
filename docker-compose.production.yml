@@ -1,0 +1,102 @@
+# Made-saite production stack.
+#
+# Three services with a deliberate ordering: PostgreSQL becomes healthy, a
+# one-shot container applies migrations and exits, and only then does the
+# application start. That ordering is the whole point — see the `migrate`
+# service comment.
+#
+# Secrets are NOT in this file. It reads them from a `.env.production` beside
+# it, which is gitignored. See docs/OPERATIONS.md.
+
+name: madesaite
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-madesaite}
+      # UTF-8 is not cosmetic here: under a C locale pg_trgm extracts zero
+      # trigrams from Persian and fuzzy search silently stops working.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Backups land on the host, not inside the container volume, so they
+      # survive `docker compose down -v`.
+      - ./backups:/backups
+    # No `ports:` mapping on purpose. The database is reachable only on the
+    # internal network; exposing 5432 to the internet is how these get found.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [internal]
+
+  # One-shot. Applies migrations, then exits 0. The app waits for it to complete
+  # successfully, so a failed migration fails the deployment instead of starting
+  # an application against a schema it does not match.
+  migrate:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    restart: "no"
+    command: ["node", "-e", "require('./migrations-runner.cjs')"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  app:
+    image: ${APP_IMAGE:?set APP_IMAGE}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      SITE_URL: ${SITE_URL:?set SITE_URL}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:?set PAYMENT_PROVIDER}
+      # One reverse proxy in front by default. Wrong values here either break
+      # rate limiting or throttle everyone — see docs/OPERATIONS.md.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      ALLOW_SANDBOX_PAYMENTS: ${ALLOW_SANDBOX_PAYMENTS:-}
+      MOCK_GATEWAY_SECRET: ${MOCK_GATEWAY_SECRET:-}
+      ZARINPAL_MERCHANT_ID: ${ZARINPAL_MERCHANT_ID:-}
+      IDPAY_API_KEY: ${IDPAY_API_KEY:-}
+      ORDER_PAYMENT_TTL_MINUTES: ${ORDER_PAYMENT_TTL_MINUTES:-30}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      # Bound to loopback: the reverse proxy on the host terminates TLS and
+      # forwards here. The app is never directly reachable from the internet.
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # Defence in depth: the image contains nothing the application should write.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks: [internal]
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    driver: bridge

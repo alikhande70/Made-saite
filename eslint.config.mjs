@@ -17,6 +17,13 @@ const config = [
   },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
   {
+    // The migration runner ships inside the production image, which has no
+    // TypeScript loader and no ESM resolution for the pruned `standalone`
+    // tree. It is CommonJS on purpose.
+    files: ['**/*.cjs'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     rules: {
       // Product images are static SVGs served from /public; next/image adds an
       // optimiser round-trip that buys nothing for them.
