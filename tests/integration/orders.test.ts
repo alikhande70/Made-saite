@@ -4,7 +4,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { desc, eq } from 'drizzle-orm';
 import { closePool, getDb } from '@/infrastructure/db/client';
-import { orderEvents, orders, payments, shipments } from '@/infrastructure/db/schema';
+import { orderEvents, orders, payments, sessions, shipments } from '@/infrastructure/db/schema';
 import { addToCart } from '@/application/cart-service';
 import { placeOrder } from '@/application/checkout-service';
 import {
@@ -220,6 +220,41 @@ describe('reservation expiry sweeper', () => {
     expect(await expireStaleOrders()).toBe(1);
     expect(await expireStaleOrders()).toBe(0);
     expect((await stockOf(order.product.id)).quantityReserved).toBe(0);
+  });
+
+  /*
+   * The tests above prove `expireStaleOrders`. This one proves the job that
+   * actually runs in production calls it.
+   *
+   * The production image contains neither `tsx` nor the `src` tree, so the
+   * cron-driven `npm run db:sweep` cannot run inside a container at all. The
+   * in-process scheduler is the only thing releasing stranded stock there, and
+   * its failure mode is silent: the shop simply stops being able to sell items
+   * that are sitting on the shelf.
+   */
+  it('runSweep releases stranded stock and prunes expired sessions', async () => {
+    const { runSweep } = await import('@/lib/scheduler');
+    const order = await placeTestOrder({ stock: 5, qty: 4 });
+    await getDb().update(orders)
+      .set({ reservationExpiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(orders.id, order.orderId));
+
+    // An expired session, which the same job is responsible for pruning.
+    const user = await createUser('customer');
+    await getDb().insert(sessions).values({
+      userId: user.id,
+      tokenHash: 'expired-session-token-hash-for-sweeper-test',
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+
+    expect(await runSweep()).toEqual({ cancelled: 1 });
+
+    const stock = await stockOf(order.product.id);
+    expect(stock.quantityReserved).toBe(0);
+    expect(stock.quantityOnHand).toBe(5);
+
+    const remaining = await getDb().select().from(sessions).where(eq(sessions.userId, user.id));
+    expect(remaining).toHaveLength(0);
   });
 });
 

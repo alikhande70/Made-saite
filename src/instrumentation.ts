@@ -12,6 +12,9 @@
  *
  * Exiting non-zero instead means the container fails to start, the deploy
  * script's readiness gate times out, and the previous release keeps serving.
+ *
+ * It is also where the reservation sweeper is scheduled — see
+ * `src/lib/scheduler.ts` for why that job lives in-process.
  */
 export async function register(): Promise<void> {
   // Node runtime only: the check reads process.env and must not run in an edge
@@ -27,4 +30,9 @@ export async function register(): Promise<void> {
     // Deliberately fatal. See the note above on why throwing is insufficient.
     process.exit(1);
   }
+
+  // Only after the configuration is known good: a process that is about to
+  // exit should not open a database connection on a timer first.
+  const { startBackgroundJobs } = await import('./lib/scheduler');
+  startBackgroundJobs();
 }

@@ -68,8 +68,11 @@ services:
       ZARINPAL_MERCHANT_ID: ${ZARINPAL_MERCHANT_ID:-}
       IDPAY_API_KEY: ${IDPAY_API_KEY:-}
       ORDER_PAYMENT_TTL_MINUTES: ${ORDER_PAYMENT_TTL_MINUTES:-30}
+      # The image has no tsx, so `npm run db:sweep` cannot run here. The
+      # sweeper runs in-process instead — docs/OPERATIONS.md §14.
+      SWEEP_INTERVAL_MINUTES: ${SWEEP_INTERVAL_MINUTES:-5}
+      DISABLE_BACKGROUND_JOBS: ${DISABLE_BACKGROUND_JOBS:-}
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
-      SENTRY_DSN: ${SENTRY_DSN:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       db:
