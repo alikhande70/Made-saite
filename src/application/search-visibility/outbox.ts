@@ -115,7 +115,22 @@ export async function drainOutbox(
   options: { limit?: number; now?: Date } = {},
   db: Database = getDb(),
 ): Promise<DrainResult> {
-  const now = options.now ?? new Date();
+  /*
+   * Due-ness is decided by the *database* clock, not this process's.
+   *
+   * `next_attempt_at` is written by the database (`defaultNow()`, and
+   * `now() + interval` on retry). Comparing it against a `new Date()` from Node
+   * meant any skew between the two clocks — a separate database container is
+   * enough — left a freshly enqueued row looking not-yet-due, so the first
+   * sweep after an enqueue silently claimed nothing. CI caught this; it passed
+   * locally because both clocks belonged to the same machine.
+   *
+   * `options.now` stays available so a caller can pin the moment explicitly.
+   */
+  const dueNow = options.now
+    ? sql`${searchSubmissionEvents.nextAttemptAt} <= ${options.now}`
+    : sql`${searchSubmissionEvents.nextAttemptAt} <= now()`;
+  const attemptedAt = options.now ?? sql`now()`;
   const limit = Math.min(options.limit ?? 500, adapter.maxBatchSize);
   const empty: DrainResult = { claimed: 0, succeeded: 0, failed: 0, parked: 0 };
 
@@ -128,7 +143,7 @@ export async function drainOutbox(
 
   const claimed = await db
     .update(searchSubmissionEvents)
-    .set({ status: 'PROCESSING', lastAttemptAt: now })
+    .set({ status: 'PROCESSING', lastAttemptAt: attemptedAt })
     .where(
       inArray(
         searchSubmissionEvents.id,
@@ -139,7 +154,7 @@ export async function drainOutbox(
             and(
               eq(searchSubmissionEvents.status, 'PENDING'),
               eq(searchSubmissionEvents.adapter, adapter.id),
-              lte(searchSubmissionEvents.nextAttemptAt, now),
+              dueNow,
             ),
           )
           .orderBy(asc(searchSubmissionEvents.nextAttemptAt))
@@ -159,7 +174,7 @@ export async function drainOutbox(
       .update(searchSubmissionEvents)
       .set({
         status: 'SUCCEEDED',
-        completedAt: new Date(),
+        completedAt: sql`now()`,
         attemptCount: sql`${searchSubmissionEvents.attemptCount} + 1`,
         lastError: null,
       })
@@ -189,7 +204,7 @@ export async function drainOutbox(
       nextAttemptAt: parkAll
         ? sql`${searchSubmissionEvents.nextAttemptAt}`
         : sql`now() + make_interval(mins => least(power(2, ${searchSubmissionEvents.attemptCount})::int, 60))`,
-      completedAt: parkAll ? new Date() : null,
+      completedAt: parkAll ? sql`now()` : null,
     })
     .where(inArray(searchSubmissionEvents.id, ids))
     .returning({ status: searchSubmissionEvents.status });
@@ -213,7 +228,7 @@ export async function retryFailedSubmissions(
 ): Promise<number> {
   const rows = await db
     .update(searchSubmissionEvents)
-    .set({ status: 'PENDING', attemptCount: 0, nextAttemptAt: new Date(), completedAt: null })
+    .set({ status: 'PENDING', attemptCount: 0, nextAttemptAt: sql`now()`, completedAt: null })
     .where(
       and(eq(searchSubmissionEvents.status, 'FAILED'), eq(searchSubmissionEvents.adapter, adapterId)),
     )

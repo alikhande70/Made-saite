@@ -203,6 +203,37 @@ describe('submission outbox', () => {
     expect(row!.nextAttemptAt.getTime()).toBeGreaterThan(before.getTime());
   });
 
+  it('schedules due-ness in database time', async () => {
+    /*
+     * Related to a CI-only failure where the claim compared a database-written
+     * `next_attempt_at` against a `new Date()` from Node, so clock skew between
+     * the two left a freshly enqueued row looking not-yet-due.
+     *
+     * Being honest about what this test does and does not prove: it pins the
+     * *semantics* — scheduling is expressed and evaluated in database time —
+     * but it cannot reproduce the skew itself, because here both clocks belong
+     * to the same machine. It passes against the buggy implementation too. The
+     * actual fix is structural (Node's clock no longer appears in the
+     * comparison at all) and CI is what verifies it.
+     */
+    await enqueueSubmissions({ urls: [`${BASE}/a`], eventType: 'manual', adapterId: 'stub' }, db);
+
+    // Scheduled one minute ahead in *database* time.
+    await db.execute(sql`update search_submission_events set next_attempt_at = now() + interval '1 minute'`);
+    expect((await drainOutbox(stubAdapter(OK), {}, db)).claimed).toBe(0);
+
+    // Due in database time — must be claimed regardless of what Node's clock says.
+    await db.execute(sql`update search_submission_events set next_attempt_at = now() - interval '1 minute'`);
+    expect((await drainOutbox(stubAdapter(OK), {}, db)).claimed).toBe(1);
+  });
+
+  it('honours an explicitly pinned moment when one is given', async () => {
+    await enqueueSubmissions({ urls: [`${BASE}/a`], eventType: 'manual', adapterId: 'stub' }, db);
+    // A caller that pins the past sees nothing due, whatever the row says.
+    const past = new Date(Date.now() - 86_400_000);
+    expect((await drainOutbox(stubAdapter(OK), { now: past }, db)).claimed).toBe(0);
+  });
+
   it('does not re-claim a row before its next attempt is due', async () => {
     await enqueueSubmissions({ urls: [`${BASE}/a`], eventType: 'manual', adapterId: 'stub' }, db);
     await drainOutbox(stubAdapter(SOFT_FAIL), {}, db);
