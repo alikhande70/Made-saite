@@ -38,6 +38,12 @@ Tests never touch development data.
 - two customers checking out the last unit over HTTP: one order exists, and
   `reserved <= on_hand` still holds.
 
+**Duplicate submission** — one customer submitting a well-stocked cart twice
+concurrently, eight times concurrently, and twice sequentially. In every case
+exactly one order exists and stock is reserved once. This is a *different* race
+from two buyers competing for the last unit: there the inventory lock separates
+the transactions, here nothing does until the cart itself is locked.
+
 **Money is never taken from the client** — a checkout request carrying
 `grandTotal: 1`, `subtotal: 1`, `shippingTotal: 0` is charged the correct amount.
 A sale that starts between page render and submit is honoured at the new price;

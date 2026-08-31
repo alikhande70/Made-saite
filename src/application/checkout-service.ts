@@ -9,14 +9,20 @@
  * resolve to the current server-side value.
  *
  * Ordering of work inside `placeOrder`:
- *   1. re-read cart lines and lock nothing yet;
- *   2. re-price from live product rows, rejecting inactive products;
+ *   1. lock the cart row — this serialises a customer's own duplicate submits
+ *      (a double-clicked button, a resubmitted form), which the inventory lock
+ *      in step 5 does not: two transactions over a well-stocked product never
+ *      contend there, so both would place an order;
+ *   2. re-read cart lines, and re-price from live product rows, rejecting
+ *      inactive products;
  *   3. quote shipping server-side;
  *   4. insert the order + immutable item snapshot;
- *   5. reserve stock — this takes the `FOR UPDATE` row locks and is the step
- *      that fails, and rolls the whole order back, when someone else won the
- *      race for the last unit;
- *   6. record the payment intent, the audit event, and empty the cart.
+ *   5. reserve stock — this takes the inventory `FOR UPDATE` row locks and is
+ *      the step that fails, and rolls the whole order back, when someone else
+ *      won the race for the last unit;
+ *   6. record the payment intent, the audit event, and empty the cart. Emptying
+ *      it is what makes the second of two duplicate submits fail cleanly with
+ *      «سبد خرید خالی است» once it acquires the cart lock.
  *
  * The gateway call happens *after* commit: holding database locks across a
  * network round-trip would serialise the whole shop behind one slow gateway.
@@ -34,7 +40,9 @@ import {
 import { errors } from '@/domain/errors';
 import { computeTotals, effectivePrice, priceLine, type PricedLine } from '@/domain/pricing';
 import { generateOrderNumber, randomToken } from '@/lib/crypto';
-import { findCartId, getCartView, type CartIdentity, type CartView } from './cart-service';
+import {
+  getCartView, lockCartForCheckout, type CartIdentity, type CartView,
+} from './cart-service';
 import { getShippingOptions, quoteMethodOrThrow } from './shipping-service';
 import { reserveStock } from './inventory-service';
 import { getPaymentProvider, getDefaultProviderId, listAvailableProviders } from './payment/registry';
@@ -136,7 +144,9 @@ export async function placeOrder(
   const provider = getPaymentProvider(providerId);
 
   const placed = await withTransaction(async (tx) => {
-    const cartId = await findCartId(identity, tx);
+    // Lock the cart before reading it: a double-clicked submit is two
+    // transactions racing over the same cart, and only this serialises them.
+    const cartId = await lockCartForCheckout(identity, tx);
     if (!cartId) throw errors.cartEmpty();
 
     // Re-read every line straight from the product table: this is the authority

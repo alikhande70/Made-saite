@@ -123,6 +123,7 @@ raw IPs are never persisted.
 | Overselling | Row locks in a consistent order + transactions + database CHECK constraints. Tested with 2 and 10 concurrent buyers. |
 | Payment callback forgery | Signature verification, provider match, amount match, status re-check under lock. Tested. |
 | Replayed callback | Idempotent — a settled order short-circuits before any inventory effect. Tested, including two concurrent duplicates. |
+| Duplicate order from a double-click | `placeOrder` takes a `FOR UPDATE` lock on the cart row before reading it. Without it, two submits of a well-stocked cart never contend on the inventory lock, so both place an order and stock is reserved twice. The second transaction now waits, re-reads a cart the first has emptied, and fails with «سبد خرید خالی است». Found by attack testing; guarded by a 2-way and an 8-way concurrent-submit test. |
 | Cart quantity abuse | Per-line cap of 20, enforced in schema, service and on merge. |
 | Inventory manipulation | Only `inventory-service` writes stock; admin-only; every movement needs a reason and is appended to `inventory_events`. A reduction below reserved quantity is refused. |
 | Order status tampering | The domain state machine is the only path; illegal transitions are rejected server-side regardless of what the UI offers. |

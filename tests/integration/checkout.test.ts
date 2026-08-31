@@ -248,3 +248,73 @@ describe('two customers checking out the last unit at the same time', () => {
     expect(s.quantityReserved).toBe(1);
   });
 });
+
+describe('one customer submitting checkout twice (double-click)', () => {
+  /**
+   * The reliability case the two-customer race does not cover.
+   *
+   * Two racers competing for the *last* unit are separated by the inventory
+   * lock. One customer double-clicking «ثبت سفارش» on a well-stocked product
+   * has no such contention: both transactions read the same cart, both find
+   * stock available, and both would happily create an order — leaving the
+   * customer with two orders and twice the stock reserved.
+   */
+  it('creates exactly one order and reserves stock once', async () => {
+    await createShippingMethod({ code: 'post', baseCost: 0 });
+    const p = await createProduct({ titleFa: 'قطعهٔ پرموجودی', stock: 50, price: 1_000_000 });
+    await addToCart({ anonToken: 'double-clicker' }, p.id, 2);
+
+    const submit = () =>
+      placeOrder(
+        { anonToken: 'double-clicker' },
+        { ...address, shippingMethodCode: 'post' },
+        { userId: null, siteUrl: SITE },
+      );
+
+    const results = await Promise.allSettled([submit(), submit()]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    expect(fulfilled).toHaveLength(1);
+
+    const allOrders = await getDb().select().from(orders);
+    expect(allOrders, 'a double-click must not produce two orders').toHaveLength(1);
+
+    const s = await stockOf(p.id);
+    expect(s.quantityReserved, 'stock must be reserved once, not twice').toBe(2);
+  });
+
+  it('is still idempotent when the two submits are sequential', async () => {
+    await createShippingMethod({ code: 'post', baseCost: 0 });
+    const p = await createProduct({ titleFa: 'قطعه', stock: 50, price: 1_000_000 });
+    await addToCart({ anonToken: 'resubmitter' }, p.id, 1);
+
+    await placeOrder({ anonToken: 'resubmitter' }, { ...address, shippingMethodCode: 'post' }, { userId: null, siteUrl: SITE });
+
+    // The browser's back button and a resubmitted form both look like this.
+    await expect(
+      placeOrder({ anonToken: 'resubmitter' }, { ...address, shippingMethodCode: 'post' }, { userId: null, siteUrl: SITE }),
+    ).rejects.toThrow();
+
+    expect(await getDb().select().from(orders)).toHaveLength(1);
+    expect((await stockOf(p.id)).quantityReserved).toBe(1);
+  });
+
+  it('survives eight simultaneous submits of the same cart', async () => {
+    await createShippingMethod({ code: 'post', baseCost: 0 });
+    const p = await createProduct({ titleFa: 'قطعه', stock: 100, price: 1_000_000 });
+    await addToCart({ anonToken: 'spammer' }, p.id, 3);
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () =>
+        placeOrder(
+          { anonToken: 'spammer' },
+          { ...address, shippingMethodCode: 'post' },
+          { userId: null, siteUrl: SITE },
+        )),
+    );
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await getDb().select().from(orders)).toHaveLength(1);
+    expect((await stockOf(p.id)).quantityReserved).toBe(3);
+  });
+});

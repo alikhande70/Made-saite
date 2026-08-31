@@ -74,6 +74,30 @@ export async function findCartId(identity: CartIdentity, db: Database = getDb())
   return row?.id ?? null;
 }
 
+/**
+ * Resolves the cart and takes a row lock on it, for callers that turn a cart
+ * into something irreversible.
+ *
+ * Without this, a double-clicked checkout is two transactions that both read
+ * the same cart items, both find stock available, and both create an order —
+ * the customer ends up with two orders and twice the stock reserved. The
+ * two-buyers-one-unit race does not expose it, because there the inventory
+ * lock separates them; a well-stocked product has no such contention.
+ *
+ * The lock makes the second transaction wait, and under READ COMMITTED it then
+ * re-reads a cart the first has already emptied — so it fails with
+ * «سبد خرید خالی است» instead of placing a duplicate order.
+ */
+export async function lockCartForCheckout(
+  identity: CartIdentity,
+  tx: Database,
+): Promise<string | null> {
+  const condition = identityCondition(identity);
+  if (!condition) return null;
+  const [row] = await tx.select({ id: carts.id }).from(carts).where(condition).limit(1).for('update');
+  return row?.id ?? null;
+}
+
 async function getOrCreateCartId(identity: CartIdentity, db: Database = getDb()): Promise<string> {
   const existing = await findCartId(identity, db);
   if (existing) return existing;
