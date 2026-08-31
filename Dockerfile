@@ -46,6 +46,15 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 
+# Redeclared here because build arguments are scoped to the stage that declares
+# them. Setting it only in the build stage left the running container with no
+# record of its own commit, which made the documented "what is deployed?" check
+# in docs/OPERATIONS.md return an empty string. Nothing in the application reads
+# this variable, so Next inlines it nowhere either — the runtime environment is
+# the only place it can live.
+ARG GIT_SHA=unknown
+ENV NEXT_PUBLIC_BUILD_SHA=${GIT_SHA}
+
 # `tini` reaps zombies and forwards signals, so SIGTERM reaches Node and the
 # container shuts down gracefully instead of being killed after the timeout.
 RUN apk add --no-cache tini
