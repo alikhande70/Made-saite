@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef1f5"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c3ccd6"/><stop offset="0.5" stop-color="#8e99a6"/><stop offset="1" stop-color="#5a646f"/>
+    </linearGradient>
+    <linearGradient id="metalV" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c3ccd6"/><stop offset="0.55" stop-color="#8e99a6"/><stop offset="1" stop-color="#5a646f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="800" height="800" fill="url(#bg)"/>
+  <ellipse cx="400" cy="690" rx="230" ry="34" fill="#0f172a" opacity="0.10"/>
+  <g filter="url(#soft)">
+    <path d="M 130 300 Q 150 210 260 200 L 610 220 Q 680 240 676 330 L 668 470 Q 660 550 570 558 L 230 570 Q 150 566 138 486 Z"
+      fill="url(#metal)" stroke="#5a646f" stroke-width="7"/>
+    <path d="M 168 312 Q 186 246 268 240 L 596 258 Q 646 274 642 336 L 636 458 Q 630 518 560 524 L 246 534 Q 186 530 176 476 Z"
+      fill="#dfe7f0" stroke="#5a646f" stroke-width="4"/>
+    <circle cx="300" cy="384" r="88" fill="#f7fafd" stroke="#5a646f" stroke-width="5"/>
+    <circle cx="300" cy="384" r="46" fill="#2f6fb5" opacity="0.30"/>
+    <circle cx="300" cy="384" r="20" fill="#ffffff"/>
+    <circle cx="520" cy="392" r="62" fill="#f7fafd" stroke="#5a646f" stroke-width="5"/>
+    <circle cx="520" cy="392" r="26" fill="#2f6fb5" opacity="0.28"/>
+    <circle cx="396" cy="478" r="7" fill="#ffffff" opacity="0.7"/><circle cx="406" cy="483.0488259088474" r="7" fill="#ffffff" opacity="0.7"/><circle cx="416" cy="483.4557845609541" r="7" fill="#ffffff" opacity="0.7"/><circle cx="426" cy="478.8467200483592" r="7" fill="#ffffff" opacity="0.7"/><circle cx="436" cy="473.45918502815243" r="7" fill="#ffffff" opacity="0.7"/><circle cx="446" cy="472.24645435202115" r="7" fill="#ffffff" opacity="0.7"/><circle cx="456" cy="476.32350701080645" r="7" fill="#ffffff" opacity="0.7"/><circle cx="466" cy="481.94191959231273" r="7" fill="#ffffff" opacity="0.7"/><circle cx="476" cy="483.93614947974027" r="7" fill="#ffffff" opacity="0.7"/></g>
+  <rect width="800" height="800" fill="url(#glow)"/>
+</svg>

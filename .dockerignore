@@ -1,0 +1,27 @@
+# Anything not needed to build. Keeping this tight is a security control as much
+# as a speed one: whatever is copied into the build context can end up in a layer.
+.git
+.github
+node_modules
+.next
+out
+dist
+coverage
+test-results
+playwright-report
+
+# Secrets must never enter an image layer — they are injected at run time.
+.env
+.env.*
+!.env.example
+
+# Tests and tooling have no place in a runtime image.
+tests
+docs
+*.md
+!README.md
+.eslintrc*
+eslint.config.mjs
+playwright.config.ts
+vitest.config.mts
+tsconfig.tsbuildinfo

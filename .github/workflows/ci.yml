@@ -1,0 +1,274 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Persian search depends on pg_trgm extracting trigrams from Persian text,
+  # which it only does under a UTF-8 database locale. A `C` locale silently
+  # produces zero trigrams and disables fuzzy matching without any error —
+  # so the CI database must match production's collation.
+  PGLOCALE: C.UTF-8
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: made_saite_test
+          POSTGRES_INITDB_ARGS: '--locale=C.UTF-8 --encoding=UTF8'
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/made_saite_test
+      SITE_URL: http://localhost:3100
+      AUTH_SECRET: ci_only_auth_secret_do_not_use_in_production_0000
+      MOCK_GATEWAY_SECRET: ci_only_gateway_secret_0000
+      PAYMENT_PROVIDER: mock
+      ORDER_PAYMENT_TTL_MINUTES: '30'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify the database locale supports Persian trigrams
+        run: |
+          psql "$DATABASE_URL" -c "create extension if not exists pg_trgm;"
+          COUNT=$(psql "$DATABASE_URL" -tAc "select array_length(show_trgm('فیلتر روغن'), 1);")
+          echo "trigrams extracted from Persian text: ${COUNT:-0}"
+          if [ -z "$COUNT" ] || [ "$COUNT" -lt 1 ]; then
+            echo "::error::pg_trgm produced no trigrams for Persian text — the database locale is not UTF-8."
+            exit 1
+          fi
+
+      - run: npx tsc --noEmit
+        name: Typecheck
+
+      - run: npm run lint
+
+      - run: npm run db:migrate
+        name: Apply migrations
+
+      - run: npm run db:seed
+        name: Seed demo data
+
+      - run: npm test
+        name: Unit, API and integration tests
+
+      - run: npx playwright install --with-deps chromium
+        name: Install browser
+
+      - run: npm run build
+        name: Production build
+
+      - run: npm run test:e2e
+        name: End-to-end tests
+
+      - name: Production dependencies carry no high-severity advisory
+        run: |
+          # Scoped to --omit=dev on purpose: the remaining moderate advisories
+          # are all in the drizzle-kit -> esbuild chain, which is a local dev
+          # server only and never reaches an image or a deployment. Anything
+          # high or critical that a shipped dependency introduces fails here.
+          npm audit --omit=dev --audit-level=high
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Production container image builds
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: madesaite:ci
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container refuses an unsafe production configuration
+        run: |
+          # The startup gate is the last thing standing between a typo in an
+          # env file and a live shop that records orders as paid without
+          # taking money. It is only trustworthy if it is exercised against
+          # the real image, so assert the container exits non-zero and names
+          # both faults. A zero exit here means the gate did not fire.
+          set +e
+          OUTPUT=$(docker run --rm \
+            -e NODE_ENV=production \
+            -e SITE_URL=https://madesaite.example \
+            -e PAYMENT_PROVIDER=mock \
+            -e AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000 \
+            -e DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/made_saite_test \
+            madesaite:ci 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          echo "container exit status: $STATUS"
+          if [ "$STATUS" -eq 0 ]; then
+            echo "::error::The production image booted with a mock payment provider and a test database."
+            exit 1
+          fi
+          echo "$OUTPUT" | grep -q 'PAYMENT_PROVIDER' \
+            || { echo "::error::The mock payment provider was not reported."; exit 1; }
+          echo "$OUTPUT" | grep -q 'test or development database' \
+            || { echo "::error::The test database was not reported."; exit 1; }
+
+      - name: A first deploy works on a clean host
+        run: |
+          # This drives the documented entrypoint — scripts/deploy.sh — against
+          # an empty Docker project, because that is the contract an operator
+          # actually follows and nothing else was testing it.
+          #
+          # The previous gate ran `docker run` against the workflow's own
+          # PostgreSQL service, which the *host* had already migrated. It
+          # proved the app boots. It never started the compose stack, never ran
+          # the migrate container, and never executed deploy.sh — so it missed
+          # a first deploy that could not work at all: drizzle-orm was absent
+          # from the runtime image, and --no-deps meant the database was never
+          # started.
+          set -euo pipefail
+
+          # The env file comes first: `compose down` interpolates the whole
+          # file before it does anything, so without --env-file it fails on the
+          # required variables, prints to stderr, and removes nothing. That is
+          # how a stale pgdata volume survives a "clean" teardown and the next
+          # deploy meets a database with the previous password.
+          #
+          # Gitignored, so the working tree stays clean and deploy.sh proceeds.
+          cat > .env.production <<'ENV'
+          POSTGRES_USER=madesaite
+          POSTGRES_PASSWORD=ci_only_db_password_not_for_production
+          POSTGRES_DB=madesaite
+          DATABASE_URL=postgres://madesaite:ci_only_db_password_not_for_production@db:5432/madesaite
+          SITE_URL=http://localhost:3500
+          APP_PORT=3500
+          PAYMENT_PROVIDER=mock
+          AUTH_SECRET=ci_only_auth_secret_do_not_use_in_production_0000
+          MOCK_GATEWAY_SECRET=ci_only_gateway_secret_0000
+          TRUSTED_PROXY_HOPS=1
+          ENV
+          mkdir -p backups
+
+          # A clean project: no containers, no volumes, no database. Scoped to
+          # this compose project on purpose — `docker rm -f $(docker ps -aq)`
+          # would also destroy the workflow's own PostgreSQL service container,
+          # which the earlier steps depend on. stderr is deliberately not
+          # discarded: a teardown that cannot run must be visible.
+          APP_IMAGE=none docker compose -f docker-compose.production.yml \
+            --env-file .env.production down -v --remove-orphans || true
+
+          # The SHA is passed explicitly: actions/checkout leaves a detached
+          # HEAD, so deploy.sh's `origin/$(git rev-parse --abbrev-ref HEAD)`
+          # default would resolve to origin/HEAD, not this commit.
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh "${{ github.sha }}"
+
+      - name: The deployed stack is what it claims to be
+        run: |
+          # Addressed through `docker` rather than `docker compose` on purpose.
+          # Compose interpolates the entire file before selecting a service, so
+          # every `compose exec` here needs APP_IMAGE set — and a compose call
+          # that errors prints nothing, which made an earlier version of this
+          # check pass vacuously. These cannot.
+          set -euo pipefail
+
+          # The migrate *container* applied the schema. Not the host, not a
+          # previous job: this database was created by this deploy.
+          TABLES=$(docker exec madesaite-db-1 psql -U madesaite -d madesaite -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'" | tr -d '[:space:]')
+          echo "tables: ${TABLES:-<none>}"
+          case "$TABLES" in ''|*[!0-9]*) echo "::error::could not read the table count"; exit 1 ;; esac
+          [ "$TABLES" -ge 30 ] || { echo "::error::migrations did not run in the container"; exit 1; }
+
+          # The running container can name the commit it was built from. The
+          # operations runbook tells operators to read exactly this, and it
+          # returned an empty string until the build arg was carried into the
+          # runtime stage.
+          SHA=$(docker exec madesaite-app-1 printenv NEXT_PUBLIC_BUILD_SHA | tr -d '[:space:]')
+          echo "build sha: ${SHA:-<empty>}"
+          [ "$SHA" = "${{ github.sha }}" ] \
+            || { echo "::error::image reports commit '${SHA:-<empty>}', expected ${{ github.sha }}"; exit 1; }
+
+          # PostgreSQL must not be reachable from outside the compose network.
+          PUBLISHED=$(docker inspect -f \
+            '{{range $p, $conf := .NetworkSettings.Ports}}{{if $conf}}{{$p}} {{end}}{{end}}' madesaite-db-1)
+          [ -z "$PUBLISHED" ] \
+            || { echo "::error::the database publishes host ports: $PUBLISHED"; exit 1; }
+          echo "database publishes no host port"
+
+      - name: Rollback returns to the previous release
+        run: |
+          # A rollback path that has never been executed is a hope, not a path.
+          #
+          # The two releases must be genuinely different images, or this proves
+          # only that the script runs: deploying the same commit twice makes
+          # the rollback a no-op tag swap that would pass even if it swapped
+          # nothing. So the currently-running image is retagged as a distinct
+          # "previous release", and the assertion is that the application
+          # container actually goes back to it.
+          set -euo pipefail
+          CURRENT=$(cat .deploy/current-image)
+          PREVIOUS="madesaite:previous-release-probe"
+          docker tag "$CURRENT" "$PREVIOUS"
+          echo "$PREVIOUS" > .deploy/current-image
+
+          # Deploy over it, so $PREVIOUS is what deploy.sh records to roll back
+          # to, and confirm the running container really is the new one.
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh "${{ github.sha }}"
+          RUNNING=$(docker inspect madesaite-app-1 --format '{{.Config.Image}}')
+          [ "$RUNNING" = "$CURRENT" ] \
+            || { echo "::error::deploy left $RUNNING running, expected $CURRENT"; exit 1; }
+
+          APP_PORT=3500 HEALTH_URL=http://127.0.0.1:3500 \
+            ./scripts/deploy.sh --rollback
+
+          # The point of the whole step: the running image changed back.
+          RUNNING=$(docker inspect madesaite-app-1 --format '{{.Config.Image}}')
+          [ "$RUNNING" = "$PREVIOUS" ] \
+            || { echo "::error::rollback left $RUNNING running, expected $PREVIOUS"; exit 1; }
+          echo "  ✔ application rolled back to $PREVIOUS"
+
+          curl -fsS http://127.0.0.1:3500/api/ready
+          echo "  ✔ still ready after rollback"
+
+      - name: Tear down the rehearsal stack
+        if: always()
+        run: |
+          APP_IMAGE=none docker compose -f docker-compose.production.yml \
+            --env-file .env.production down -v --remove-orphans || true
+          rm -f .env.production
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

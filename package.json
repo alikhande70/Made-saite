@@ -1,0 +1,60 @@
+{
+  "name": "made-saite",
+  "version": "0.1.0",
+  "private": true,
+  "description": "فروشگاه اینترنتی قطعات یدکی خودرو — Persian RTL auto-parts e-commerce",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "db:reset": "tsx scripts/reset.ts",
+    "db:sweep": "tsx scripts/sweep.ts",
+    "assets:generate": "node scripts/generate-images.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration tests/api",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:db": "tsx scripts/e2e-db.ts",
+    "test:e2e:install": "playwright install chromium",
+    "test:all": "vitest run && playwright test",
+    "bench:sitemap": "tsx scripts/bench-sitemap.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/vazirmatn": "^5.3.0",
+    "drizzle-orm": "^0.45.2",
+    "next": "^15.5.24",
+    "pg": "8.16.3",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "4.1.13",
+    "@types/node": "22.18.1",
+    "@types/pg": "8.15.5",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "axe-core": "4.13.0",
+    "dotenv": "^16.6.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "9.35.0",
+    "eslint-config-next": "^15.5.24",
+    "postcss": "^8.5.26",
+    "tailwindcss": "4.1.13",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "postcss": "^8.5.26"
+  }
+}
