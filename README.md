@@ -112,9 +112,15 @@ to work. See [docs/PAYMENTS.md](docs/PAYMENTS.md).
 **Admin** — dashboard, order workflow with tracking codes, product CRUD with
 images/specs/fitments/references, inventory adjustments with mandatory reasons
 and full audit history, categories, brands, shipping rules, customers, store
-settings, a read-only activity log, and **bulk import**: upload a supplier CSV,
-see every malformed row named before anything is written, then apply the whole
-file in one transaction.
+settings, read-only payment and shipment reports, a read-only activity log, and:
+
+- **Vehicle taxonomy** — brands, models, generations, trims and engines, each
+  row showing how many fitments and saved customer vehicles depend on it.
+  Deleting a row that carries compatibility data is refused with the counts and
+  an offer to deactivate instead, because the cascade would silently turn a
+  product's «سازگار» into «اطلاعات کافی نیست».
+- **Bulk import** — upload a supplier CSV, see every malformed row named before
+  anything is written, then apply the whole file in one transaction.
 
 **SEO** — per-page metadata, canonical URLs, Open Graph, `Product` and
 `BreadcrumbList` structured data generated from real database state, sitemap and

@@ -130,6 +130,8 @@ raw IPs are never persisted.
 | Import as a catalogue-creation path | Nothing is auto-created. An unknown brand, category, vehicle model, engine or trim fails the row by name, so a typo in a supplier file cannot mint taxonomy. |
 | Import payload size | Capped at 4 MB **measured in UTF-8 bytes**, not characters — Persian is 2–3 bytes per character, so a character-counted cap would admit a file 2–3× the intended size. Row count is capped separately. Tested. |
 | Fitment claims without evidence | The compatibility verdict is computed server-side from `product_fitments` rows only. A missing row yields UNKNOWN, never a fabricated "fits" or "does not fit". |
+| Destructive taxonomy edits | Deleting a vehicle row cascades through configurations to fitments, silently converting a product's «سازگار» into «اطلاعات کافی نیست». `deleteVehicleEntity` counts dependent fitments and saved customer vehicles first and refuses when there are any, naming both and offering deactivation. Tested at the service, HTTP and UI layers. |
+| Payment state tampering from the admin UI | The payments screen is read-only. Payment state is written exclusively by the callback handler under an order lock; an editable admin screen would be a second, unsynchronised writer of money state. |
 | Incoherent vehicle configurations | Model, generation, trim and engine are four independent foreign keys, so the database alone would accept a پژو ۲۰۶ paired with a پراید engine — a car that does not exist, carrying fitment claims. `getOrCreateConfiguration` verifies the model exists and that every narrowing belongs to it: unknown model → 404, mismatched narrowing → 422 naming the dimension. Found by attack testing; tested at both the service and HTTP boundaries (ADR-011). |
 
 ## Data handling

@@ -83,6 +83,14 @@ whole-file rollback when one row would push stock below what open orders
 reserve, replay protection on an already-committed job, and re-resolution of
 references at commit time.
 
+**Vehicle taxonomy administration** — the destructive path is the one under
+test. `tests/integration/vehicle-admin.test.ts` asserts that deleting a brand,
+model or engine is refused whenever fitments or saved customer vehicles depend
+on it, that the refusal names both counts, that deactivation is the working
+alternative, and that a genuinely unused row still deletes cleanly. The E2E
+test drives the same refusal through the admin UI and checks nothing was
+removed.
+
 **Soft 404s** — `notFound()` must produce an HTTP 404, not a 200 with a 404 body.
 Five missing-resource routes are asserted directly, because a Suspense boundary
 above a route silently converts all of them (see docs/ARCHITECTURE.md).

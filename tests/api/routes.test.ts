@@ -5,7 +5,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ctx, makeRequest, readResponse, resetContext, signIn, signOut } from '../helpers/api';
 import { closePool, getDb } from '@/infrastructure/db/client';
-import { createProduct, createShippingMethod, createUser, createVehicle, resetDatabase, stockOf } from '../helpers/factory';
+import { addFitment, createProduct, createShippingMethod, createUser, createVehicle, resetDatabase, stockOf } from '../helpers/factory';
 import { eq } from 'drizzle-orm';
 import { products } from '@/infrastructure/db/schema';
 
@@ -655,5 +655,70 @@ describe('/api/admin/imports', () => {
     );
     expect(replay.status).toBe(409);
     expect(await getDb().select().from(products).where(eq(products.sku, 'API-IMP-1'))).toHaveLength(1);
+  });
+});
+
+describe('/api/admin/vehicles', () => {
+  it('refuses an anonymous caller and a signed-in customer', async () => {
+    const vehicles = await import('@/app/api/admin/vehicles/route');
+    expect((await readResponse(
+      await vehicles.GET(makeRequest('/api/admin/vehicles') as never, undefined as never),
+    )).status).toBe(401);
+
+    const customer = await createUser('customer', '09120000041');
+    await signIn(customer.id);
+    expect((await readResponse(
+      await vehicles.POST(makeRequest('/api/admin/vehicles', {
+        method: 'POST', body: { kind: 'brand', nameFa: 'برند نفوذی' },
+      }) as never, undefined as never),
+    )).status).toBe(403);
+  });
+
+  it('creates a brand and a model, and rejects an inverted year window', async () => {
+    const admin = await createUser('admin', '09120000042');
+    await signIn(admin.id);
+    const vehicles = await import('@/app/api/admin/vehicles/route');
+
+    const brand = await readResponse<{ id: string }>(
+      await vehicles.POST(makeRequest('/api/admin/vehicles', {
+        method: 'POST', body: { kind: 'brand', nameFa: 'ایران خودرو', nameEn: 'IKCO' },
+      }) as never, undefined as never),
+    );
+    expect(brand.status).toBe(201);
+
+    const bad = await readResponse(
+      await vehicles.POST(makeRequest('/api/admin/vehicles', {
+        method: 'POST',
+        body: { kind: 'model', vehicleBrandId: brand.body.data!.id, nameFa: 'مدل', yearFrom: 1400, yearTo: 1390 },
+      }) as never, undefined as never),
+    );
+    expect(bad.status).toBe(422);
+
+    const good = await readResponse<{ id: string }>(
+      await vehicles.POST(makeRequest('/api/admin/vehicles', {
+        method: 'POST',
+        body: { kind: 'model', vehicleBrandId: brand.body.data!.id, nameFa: 'دنا', yearFrom: 1396, yearTo: 1404 },
+      }) as never, undefined as never),
+    );
+    expect(good.status).toBe(201);
+  });
+
+  it('refuses to delete a model that compatibility data depends on', async () => {
+    const admin = await createUser('admin', '09120000043');
+    const { model, engine } = await createVehicle();
+    const product = await createProduct({ titleFa: 'قطعه' });
+    await addFitment(product.id, model.id, engine.id);
+    await signIn(admin.id);
+
+    const vehicles = await import('@/app/api/admin/vehicles/route');
+    const res = await readResponse(
+      await vehicles.DELETE(
+        makeRequest(`/api/admin/vehicles?kind=model&id=${model.id}`, { method: 'DELETE' }) as never,
+        undefined as never,
+      ),
+    );
+    // 409, and the message must name what would be lost.
+    expect(res.status).toBe(409);
+    expect(res.body.message).toContain('رکورد سازگاری');
   });
 });

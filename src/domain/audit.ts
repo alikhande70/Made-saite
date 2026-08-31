@@ -15,7 +15,8 @@ export type AuditAction =
   | 'shipping.upsert' | 'shipping.delete'
   | 'customer.activate' | 'customer.deactivate'
   | 'settings.update'
-  | 'import.validate' | 'import.commit' | 'import.discard';
+  | 'import.validate' | 'import.commit' | 'import.discard'
+  | 'vehicle.upsert' | 'vehicle.delete';
 
 /** Persian labels, shown verbatim in the admin audit log. */
 export const AUDIT_ACTION_LABEL_FA: Record<string, string> = {
@@ -39,4 +40,6 @@ export const AUDIT_ACTION_LABEL_FA: Record<string, string> = {
   'import.validate': 'بررسی فایل ورودی',
   'import.commit': 'اعمال فایل ورودی',
   'import.discard': 'کنارگذاشتن فایل ورودی',
+  'vehicle.upsert': 'ثبت/ویرایش خودرو',
+  'vehicle.delete': 'حذف خودرو',
 };

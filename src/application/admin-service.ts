@@ -8,8 +8,8 @@
 import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb, withTransaction, type Database } from '@/infrastructure/db/client';
 import {
-  brands, categories, inventory, productImages, productSpecs,
-  productReferences, products, users,
+  brands, categories, inventory, orders, payments, productImages, productSpecs,
+  productReferences, products, shipments, users,
 } from '@/infrastructure/db/schema';
 import { errors } from '@/domain/errors';
 import { ensureInventoryRow } from './inventory-service';
@@ -554,4 +554,95 @@ export async function getSalesByDay(days = 14, db: Database = getDb()) {
     order by d.day asc
   `);
   return rows.rows.map((r) => ({ day: r.day, orderCount: r.order_count, revenue: Number(r.revenue) }));
+}
+
+/* ── payments and shipments (read-only views) ─────────────────────────── */
+
+/**
+ * Payment attempts across all orders.
+ *
+ * Read-only on purpose: payment state is written exclusively by the callback
+ * handler under an order lock, so an admin screen that could edit it would be
+ * a second, unsynchronised writer of money state. What an administrator needs
+ * here is the ability to *see* a failed or stuck attempt and follow it to the
+ * order, which is what this provides.
+ */
+export async function listPayments(
+  filter: { status?: string; page?: number; perPage?: number } = {},
+  db: Database = getDb(),
+) {
+  const page = Math.max(1, filter.page ?? 1);
+  const perPage = Math.min(100, filter.perPage ?? 50);
+  const where = filter.status
+    ? sql`${payments.status} = ${filter.status}`
+    : undefined;
+
+  const rows = await db
+    .select({
+      id: payments.id,
+      provider: payments.provider,
+      status: payments.status,
+      amount: payments.amount,
+      failureReason: payments.failureReason,
+      createdAt: payments.createdAt,
+      updatedAt: payments.updatedAt,
+      orderId: orders.id,
+      orderNumber: orders.orderNumber,
+      orderStatus: orders.status,
+      customerName: orders.customerFullName,
+    })
+    .from(payments)
+    .innerJoin(orders, eq(orders.id, payments.orderId))
+    .where(where)
+    .orderBy(desc(payments.createdAt))
+    .limit(perPage)
+    .offset((page - 1) * perPage);
+
+  const [count] = await db.select({ n: sql<number>`count(*)::int` }).from(payments).where(where);
+  const total = count?.n ?? 0;
+
+  /*
+   * `providerRef` and `transactionId` are deliberately absent. They are
+   * gateway correlation identifiers; showing them on a list screen puts them
+   * into screenshots and support tickets for no operational benefit.
+   */
+  return { items: rows, total, page, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)) };
+}
+
+export async function listShipments(
+  filter: { status?: string; page?: number; perPage?: number } = {},
+  db: Database = getDb(),
+) {
+  const page = Math.max(1, filter.page ?? 1);
+  const perPage = Math.min(100, filter.perPage ?? 50);
+  const where = filter.status ? sql`${shipments.status} = ${filter.status}` : undefined;
+
+  const rows = await db
+    .select({
+      id: shipments.id,
+      carrier: shipments.carrier,
+      methodCode: shipments.methodCode,
+      trackingCode: shipments.trackingCode,
+      status: shipments.status,
+      cost: shipments.cost,
+      shippedAt: shipments.shippedAt,
+      deliveredAt: shipments.deliveredAt,
+      createdAt: shipments.createdAt,
+      orderId: orders.id,
+      orderNumber: orders.orderNumber,
+      orderStatus: orders.status,
+      customerName: orders.customerFullName,
+      province: orders.shippingProvince,
+      city: orders.shippingCity,
+    })
+    .from(shipments)
+    .innerJoin(orders, eq(orders.id, shipments.orderId))
+    .where(where)
+    .orderBy(desc(shipments.createdAt))
+    .limit(perPage)
+    .offset((page - 1) * perPage);
+
+  const [count] = await db.select({ n: sql<number>`count(*)::int` }).from(shipments).where(where);
+  const total = count?.n ?? 0;
+  return { items: rows, total, page, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)) };
 }

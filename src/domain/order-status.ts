@@ -116,3 +116,30 @@ export class InvalidTransitionError extends DomainError {
     );
   }
 }
+
+/* ── payment and shipment vocabularies ────────────────────────────────── */
+
+/*
+ * Read-only labels for the admin payment and shipment views. Both statuses are
+ * written by their own services; nothing here changes state.
+ */
+
+export type PaymentStatus = 'INITIATED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'REFUNDED';
+
+export const PAYMENT_STATUS_LABEL_FA: Record<PaymentStatus, string> = {
+  INITIATED: 'آغازشده',
+  SUCCEEDED: 'موفق',
+  FAILED: 'ناموفق',
+  CANCELLED: 'لغوشده',
+  REFUNDED: 'بازپرداخت‌شده',
+};
+
+export type ShipmentStatus = 'PENDING' | 'READY' | 'IN_TRANSIT' | 'DELIVERED' | 'RETURNED';
+
+export const SHIPMENT_STATUS_LABEL_FA: Record<ShipmentStatus, string> = {
+  PENDING: 'در انتظار آماده‌سازی',
+  READY: 'آمادهٔ ارسال',
+  IN_TRANSIT: 'در مسیر',
+  DELIVERED: 'تحویل‌شده',
+  RETURNED: 'مرجوع‌شده',
+};

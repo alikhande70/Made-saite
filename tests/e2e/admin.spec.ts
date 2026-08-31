@@ -203,6 +203,61 @@ test.describe('bulk import', () => {
     await expect(page.getByRole('cell', { name: /اعمال فایل درون‌ریزی/ }).first()).toBeVisible();
   });
 
+});
+
+test.describe('vehicle taxonomy and reports', () => {
+  test('an admin can add a vehicle, and cannot delete one carrying fitments', async ({ page }) => {
+    await signIn(page, DEMO_ADMIN);
+    await page.goto('/admin/vehicles');
+    await expect(page.getByRole('heading', { level: 1, name: /پایگاه خودروها/ })).toBeVisible();
+
+    // Import deliberately refuses to create vehicles, so this page is the only
+    // way a new model enters the system.
+    const brandName = `برند آزمایشی ${Date.now()}`;
+    await page.getByRole('button', { name: 'افزودن برند خودرو' }).click();
+    await page.getByLabel('نام فارسی').fill(brandName);
+    await page.getByLabel('نام انگلیسی (اختیاری)').fill(`E2E Brand ${Date.now()}`);
+    await page.getByRole('button', { name: 'ثبت', exact: true }).click();
+    await expect(page.getByText('برند ثبت شد.')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: new RegExp(brandName) })).toBeVisible();
+
+    /*
+     * Deleting a model cascades through configurations to fitments, silently
+     * turning a product's «سازگار» into «اطلاعات کافی نیست». The server must
+     * refuse, and must say how much data was at stake.
+     */
+    const used = await query<{ name: string; n: string }>(
+      `select vm.name_fa as name, count(*)::text as n
+         from product_fitments pf
+         join vehicle_configurations vc on vc.id = pf.vehicle_configuration_id
+         join vehicle_models vm on vm.id = vc.vehicle_model_id
+        group by 1 order by count(*) desc limit 1`,
+    );
+    test.skip(used.length === 0, 'no model carries fitments');
+
+    const row = page.getByRole('row').filter({ hasText: used[0]!.name }).first();
+    await row.getByRole('button', { name: new RegExp(`حذف ${used[0]!.name}`) }).click();
+    // Scoped to the alert: «رکورد سازگاری» is also a column header.
+    const refusal = page.getByRole('alert').filter({ hasText: 'حذف ممکن نیست' });
+    await expect(refusal).toBeVisible();
+    await expect(refusal).toContainText('رکورد سازگاری');
+    // The refusal must offer the safe alternative, not just say no.
+    await expect(refusal).toContainText('غیرفعال کنید');
+
+    // Nothing was removed.
+    const still = await query(`select 1 from vehicle_models where name_fa = $1`, [used[0]!.name]);
+    expect(still).toHaveLength(1);
+  });
+
+  test('payments and shipments are read-only reports', async ({ page }) => {
+    await signIn(page, DEMO_ADMIN);
+
+    await page.goto('/admin/payments');
+    await expect(page.getByRole('heading', { level: 1, name: 'پرداخت‌ها' })).toBeVisible();
+    await page.goto('/admin/shipments');
+    await expect(page.getByRole('heading', { level: 1, name: 'مرسوله‌ها' })).toBeVisible();
+  });
+
   test('the audit log is admin-only', async ({ request }) => {
     const response = await request.get('/admin/audit', { maxRedirects: 0 });
     // Unauthenticated visitors are bounced to the login page, never shown the log.

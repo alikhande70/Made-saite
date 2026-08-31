@@ -252,3 +252,30 @@ Nothing is auto-created from an import. An unknown brand, category, vehicle
 model, engine or trim fails the row and is named in the report, because a typo
 in a supplier's brand column must not silently mint a brand, and a silently
 dropped fitment produces a part that appears to fit nothing.
+
+---
+
+## Why import cannot create vehicles
+
+Bulk import fails a row whose vehicle model, engine or trim is unknown, rather
+than creating it. That is a deliberate asymmetry with the rest of the importer,
+and it has a cost: somebody has to add the vehicle first.
+
+The reason is that a vehicle is a *fact about the world*, not a fact about this
+store's catalogue. A brand name mistyped in a supplier's sheet would mint a
+second brand — annoying, visible, fixable. A vehicle model mistyped would mint a
+car that does not exist, and every fitment row attached to it would then be a
+compatibility claim about that car. Those claims are what the storefront shows
+customers, so they must come from a person reading a specification, not from a
+spreadsheet cell.
+
+`/admin/vehicles` is therefore not optional chrome; it is the only entry point,
+and it is why the import error message names the missing model instead of
+silently skipping the fitment.
+
+The mirror-image rule applies to deletion. `vehicle_models` cascades through
+`vehicle_configurations` to `product_fitments`, so removing a model destroys
+compatibility data — and the products that lose it do not error, they quietly
+start answering «اطلاعات کافی نیست». `deleteVehicleEntity` counts the dependent
+fitments and saved customer vehicles first and refuses when there are any,
+naming both counts and offering deactivation, which preserves the data.
